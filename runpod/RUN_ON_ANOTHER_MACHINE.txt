@@ -14,6 +14,7 @@ Files (all in this kit)
 - ask.py             ask one question from the command line
 - read_sheet.py      read a whole sheet image (uses sheet_reader.py)
 - sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
+- sheet_qa.py        answers questions about a sheet from what read_sheet.py read
 - test_sheets/       whole-sheet images of test sheets 100, 104, 110 at 150 and 75 dpi
 - examples/          crops from test sheet 100 with sample questions
 - requirements.txt
@@ -46,6 +47,18 @@ Read a WHOLE sheet image (50-200 dpi)
     ..._overlay.png   the sheet with the bridges found boxed (red = FLAG/CHECK)
   FL below MIN FL is reported as "FLAG: For bridge X min. FL = .., and FL = ..".
   About 100 questions to the model per sheet: roughly 5-10 minutes on an RTX 3060.
+
+  Ask questions about the sheet (the reading above is saved and reused, so answers come instantly):
+    python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png -q "ground level at bridge 560"
+    python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png -q "bridge 560" -q "which bridges are flagged"
+    python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png -i     (keeps asking at a prompt)
+  Examples of questions:
+    bridge 560 (full report)      ground level at bridge 560     FL of 558      min FL of 562     levels of 565
+    HFL at 565    free board at 532    cut or fill at 560    rail level and track distance at 560
+    span of 554   proposal for 560     ROB-239    LC-226     ground level at CH 1241000     1242+662.9
+    which bridges are flagged     list bridges     summary     drawing number     scale     TBM BM39     help
+  A chainage away from any bridge makes the model read that band column (a few seconds), which is why
+  --adapter stays on the command line. Add --reread to read the sheet again from scratch.
   Web page: the "Read a whole sheet" tab of app.py does the same, with a CSV download.
   test_sheets/ has sheets 100, 104, 110 (never seen in training) at 150 and 75 dpi.
   Below ~100 dpi the text is under 13 px tall, so expect misread digits; 150-200 dpi is best.

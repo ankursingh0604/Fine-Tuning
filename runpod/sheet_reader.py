@@ -205,6 +205,25 @@ class Reader:
         m = re.search(r"chainage\s+([\d.]+)\s+to\s+([\d.]+)", ans)
         return (float(m.group(1)), float(m.group(2))) if m else None
 
+    def band_layout(self, sh):
+        """Where the data bands are and the chainage of their first column: {table, start_ch, n_cols} or None."""
+        table = sh.band_table()
+        if not table:
+            return None
+        n_cols = int(round((table[2] - 5.6 - (table[1] + 10.9)) / PITCH)) + 1
+        rng = self.band_range(sh, table, 0)
+        return {"table": list(table), "start_ch": rng[0], "n_cols": n_cols} if rng else None
+
+    def band_at(self, sh, layout, ch, name):
+        """The band column nearest chainage ch (no interpolation), read by the model, or None if ch is off the bands."""
+        idx = int(round((ch - layout["start_ch"]) / 20))
+        if not 0 <= idx < layout["n_cols"]:
+            return None
+        s = max(0, min(idx - 8, layout["n_cols"] - 16))
+        img, (x0, x1) = self.band_image(sh, layout["table"], s)
+        band = parse_json(self.ask([img], Q_BAND.format(name=name, ch=g(ch)), {"kind": "band", "xrange": (x0, x1), "ch": ch}))
+        return band if isinstance(band, dict) else None
+
     def read(self, image):
         sh = Sheet(image)
         result = {"dpi": round(sh.dpi), "warnings": list(sh.warnings), "bridges": [], "title": None, "tbm": None, "findings": []}
@@ -212,14 +231,9 @@ class Reader:
         self.log("finding bridge callouts ...")
         calls = self.find_bridges(sh)
         ids = sorted({bid for bid, _ in calls})
-        table = sh.band_table()
-        n_cols = start_ch = None
-        if table:
-            n_cols = int(round((table[2] - 5.6 - (table[1] + 10.9)) / PITCH)) + 1
-            rng = self.band_range(sh, table, 0)
-            if rng:
-                start_ch = rng[0]
-        else:
+        layout = self.band_layout(sh)
+        result["band_layout"] = layout
+        if not layout:
             result["warnings"].append("The L-section data bands were not found; band values were not read.")
         self.log(f"reading {len(ids)} bridges ...")
         for bid in ids:
@@ -229,15 +243,8 @@ class Reader:
             rec = {"bridge_id": bid, "read_from": f"{view} callout", "box_pt": [round(v, 1) for v in box], "data": data,
                    "raw": None if data else raw, "band": None, "checks": []}
             ch = (data or {}).get("chainage_m")
-            if data and isinstance(ch, (int, float)) and table and start_ch is not None and n_cols:
-                idx = int(round((ch - start_ch) / 20))
-                if 0 <= idx < n_cols:
-                    s = max(0, min(idx - 8, n_cols - 16))
-                    img, (x0, x1) = self.band_image(sh, table, s)
-                    name = bid if bid.startswith(("ROB", "LC")) else f"Bridge {bid}"
-                    ans = self.ask([img], Q_BAND.format(name=name, ch=g(ch)), {"kind": "band", "xrange": (x0, x1), "ch": ch})
-                    band = parse_json(ans)
-                    rec["band"] = band if isinstance(band, dict) else None
+            if data and isinstance(ch, (int, float)) and layout:
+                rec["band"] = self.band_at(sh, layout, ch, bid if bid.startswith(("ROB", "LC")) else f"Bridge {bid}")
             rec["checks"] = check_bridge(rec)
             result["bridges"].append(rec)
         self.log("reading title block and TBM table ...")
