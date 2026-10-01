@@ -1,0 +1,83 @@
+{
+ "train": {
+  "rows": 3676,
+  "images": 1176,
+  "tasks": {
+   "abbr_qa": 39,
+   "band_absent": 87,
+   "band_bridge": 120,
+   "band_json": 174,
+   "band_qa": 348,
+   "band_range": 87,
+   "bridge_explain": 518,
+   "bridge_ground": 641,
+   "bridge_json": 518,
+   "bridge_level_check": 110,
+   "bridge_level_qa": 228,
+   "curve_json": 109,
+   "curve_qa": 109,
+   "notes_qa": 39,
+   "sheet_layout": 13,
+   "tbm_json": 13,
+   "tbm_qa": 13,
+   "tile_region": 296,
+   "tile_structures": 188,
+   "title_json": 13,
+   "title_qa": 13
+  }
+ },
+ "val": {
+  "rows": 250,
+  "images": 76,
+  "tasks": {
+   "abbr_qa": 3,
+   "band_absent": 8,
+   "band_bridge": 8,
+   "band_json": 16,
+   "band_qa": 32,
+   "band_range": 8,
+   "bridge_explain": 16,
+   "bridge_ground": 42,
+   "bridge_json": 16,
+   "bridge_level_check": 8,
+   "bridge_level_qa": 16,
+   "curve_json": 13,
+   "curve_qa": 13,
+   "notes_qa": 3,
+   "sheet_layout": 1,
+   "tbm_json": 1,
+   "tbm_qa": 1,
+   "tile_region": 26,
+   "tile_structures": 17,
+   "title_json": 1,
+   "title_qa": 1
+  }
+ },
+ "test": {
+  "rows": 820,
+  "images": 230,
+  "tasks": {
+   "abbr_qa": 9,
+   "band_absent": 24,
+   "band_bridge": 33,
+   "band_json": 44,
+   "band_qa": 88,
+   "band_range": 20,
+   "bridge_explain": 71,
+   "bridge_ground": 182,
+   "bridge_json": 71,
+   "bridge_level_check": 30,
+   "bridge_level_qa": 60,
+   "curve_json": 17,
+   "curve_qa": 17,
+   "notes_qa": 9,
+   "sheet_layout": 3,
+   "tbm_json": 3,
+   "tbm_qa": 3,
+   "tile_region": 83,
+   "tile_structures": 47,
+   "title_json": 3,
+   "title_qa": 3
+  }
+ }
+}

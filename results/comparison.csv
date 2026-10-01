@@ -1,0 +1,17 @@
+task,n_base,box_precision_base,box_precision_ft,box_recall_base,box_recall_ft,correct_base,correct_ft,empty_ok_base,empty_ok_ft,field_acc_base,field_acc_ft,value_recall_base,value_recall_ft,word_recall_base,word_recall_ft
+abbr_qa,3,,,,,,,,,,,,,1.0,1.0
+bridge_explain,8,,,,,,,,,,,0.509,1.0,0.331,1.0
+bridge_ground,8,0.0,0.375,0.0,0.375,,,,,,,,,,
+bridge_json,8,,,,,,,,,0.018,1.0,0.547,1.0,,
+bridge_level_check,8,,,,,0.375,1.0,,,,,,,,
+bridge_level_qa,8,,,,,,,,,,,0.875,1.0,0.964,1.0
+curve_json,8,,,,,,,,,0.104,1.0,0.76,1.0,,
+curve_qa,8,,,,,,,,,,,1.0,1.0,1.0,1.0
+notes_qa,3,,,,,,,,,,,0.75,1.0,0.769,0.917
+sheet_layout,1,,1.0,0.0,0.818,,,,,,,,,,
+tbm_json,1,,,,,,,,,0.0,0.944,0.882,1.0,,
+tbm_qa,1,,,,,,,,,,,0.667,1.0,0.6,1.0
+tile_region,8,,,,,,,,,,,,,0.583,0.875
+tile_structures,8,0.0,,,,,,0.125,1.0,,,,,,
+title_json,1,,,,,,,,,0.0,1.0,0.077,1.0,,
+title_qa,1,,,,,,,,,,,1.0,1.0,1.0,1.0

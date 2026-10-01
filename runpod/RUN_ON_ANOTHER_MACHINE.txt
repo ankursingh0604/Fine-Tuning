@@ -1,0 +1,59 @@
+RUN THE FINE-TUNED RAILWAY DRAWING MODEL ON ANOTHER MACHINE
+
+What you need
+- A computer with an NVIDIA GPU:
+    8 GB or more  -> normal (16-bit) mode, best accuracy
+    4-8 GB        -> add --4bit (a little less accurate, slower)
+  Without an NVIDIA GPU it does not work in practice (CPU is far too slow).
+- Python 3.10-3.12, and about 15 GB free disk (the base model is ~7.5 GB, downloaded once).
+- Internet the first time (downloads Qwen2.5-VL-3B from Hugging Face).
+
+Files (all in this kit)
+- adapter.zip        the trained weights (keep it zipped)
+- app.py             web page to ask questions
+- ask.py             ask one question from the command line
+- read_sheet.py      read a whole sheet image (uses sheet_reader.py)
+- sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
+- test_sheets/       whole-sheet images of test sheets 100, 104, 110 at 150 and 75 dpi
+- examples/          crops from test sheet 100 with sample questions
+- requirements.txt
+
+Setup (once)
+  python -m venv venv
+  venv\Scripts\activate            (Windows)    or    source venv/bin/activate   (Linux/Mac)
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+  pip install -r requirements.txt
+
+Quick test from the command line
+  python ask.py --adapter adapter.zip --image examples/s100_br560_lsec0.png --question "Read the callout for bridge 560 in this crop and return its details as JSON." --compare
+
+  It should print "adapter attached to ... layers" first. If it says the adapter did not attach,
+  upgrade transformers (pip install -U transformers).
+
+Web page
+  python app.py --adapter adapter.zip
+  then open http://localhost:7860 in a browser on that machine.
+  (add --4bit on small GPUs; add --share for a temporary public link - anyone with the link can use it)
+
+Read a WHOLE sheet image (50-200 dpi)
+  Command line:
+    python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png
+  It finds every bridge callout, reads each callout and level block, reads the data-band values at the
+  nearest column (no interpolation), then the title block and TBM table. It writes a folder
+  sheet_100_150dpi_read/ with:
+    ..._bridges.csv   one row per bridge (opens in Excel)
+    ..._read.json     everything read
+    ..._overlay.png   the sheet with the bridges found boxed (red = FLAG/CHECK)
+  FL below MIN FL is reported as "FLAG: For bridge X min. FL = .., and FL = ..".
+  About 100 questions to the model per sheet: roughly 5-10 minutes on an RTX 3060.
+  Web page: the "Read a whole sheet" tab of app.py does the same, with a CSV download.
+  test_sheets/ has sheets 100, 104, 110 (never seen in training) at 150 and 75 dpi.
+  Below ~100 dpi the text is under 13 px tall, so expect misread digits; 150-200 dpi is best.
+
+Expected answer for the quick test (bridge 560, sheet 100):
+  {"bridge_id": "560", "existing_type": "ARCH", "existing_span": "1 X 0.61", "crossing": "DRAIN",
+   "proposal": "1 X 2 X 2 - RCC BOX", "category": "MINOR", "chainage_m": 1242662.9, "levels": {...}}
+
+Things to remember
+- Numbers from the model can contain small misreads (a digit or a sign). Check important values.
+- Crops work best like the training ones: rendered from the PDF at about 150 dpi, text clearly readable.

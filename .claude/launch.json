@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pdf-checker",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["checker/app.py"],
+      "port": 7861
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+ "train": {
+  "rows": 683,
+  "tasks": {
+   "reason_band_absent": 26,
+   "reason_band_check": 52,
+   "reason_band_cutfill": 52,
+   "reason_band_extreme": 52,
+   "reason_bridge_bands": 116,
+   "reason_curve_position": 34,
+   "reason_curve_verify": 45,
+   "reason_free_board": 2,
+   "reason_gradient": 168,
+   "reason_level_check": 110,
+   "reason_ruling_gradient": 26
+  }
+ },
+ "val": {
+  "rows": 69,
+  "tasks": {
+   "reason_band_absent": 2,
+   "reason_band_check": 4,
+   "reason_band_cutfill": 4,
+   "reason_band_extreme": 4,
+   "reason_bridge_bands": 8,
+   "reason_curve_position": 12,
+   "reason_curve_verify": 6,
+   "reason_free_board": 2,
+   "reason_gradient": 17,
+   "reason_level_check": 8,
+   "reason_ruling_gradient": 2
+  }
+ },
+ "test": {
+  "rows": 168,
+  "tasks": {
+   "reason_band_absent": 6,
+   "reason_band_check": 12,
+   "reason_band_cutfill": 12,
+   "reason_band_extreme": 12,
+   "reason_bridge_bands": 31,
+   "reason_curve_position": 12,
+   "reason_curve_verify": 7,
+   "reason_gradient": 40,
+   "reason_level_check": 30,
+   "reason_ruling_gradient": 6
+  }
+ }
+}

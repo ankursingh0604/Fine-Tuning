@@ -1,0 +1,13 @@
+BRIDGES WITH PROPOSED FL BELOW MIN. FL REQUIRED
+Mathura-Nagda 3rd Line, Detailed Plan and L-Section, sheets 94-110 (largest shortfall first)
+
+FLAG: For bridge 532 min. FL = 193.345, and FL = 193.059 (0.286 m below the minimum required).  Sheet 96, CH 1222181.881
+FLAG: For bridge LC-242 min. FL = 178.406, and FL = 178.357 (0.049 m below the minimum required).  Sheet 101, CH 1247160.505
+FLAG: For bridge 515 min. FL = 196.771, and FL = 196.757 (0.014 m below the minimum required).  Sheet 94, CH 1211160.751
+FLAG: For bridge 538 min. FL = 190.651, and FL = 190.648 (0.003 m below the minimum required).  Sheet 97, CH 1227694.328
+FLAG: For bridge 537A min. FL = 190.76, and FL = 190.757 (0.003 m below the minimum required).  Sheet 97, CH 1227585.915
+FLAG: For bridge LC-226 min. FL = 193.006, and FL = 193.005 (0.001 m below the minimum required).  Sheet 96, CH 1221094.014
+FLAG: For bridge 631A min. FL = 177.585, and FL = 177.584 (0.001 m below the minimum required).  Sheet 109, CH 1276908.192
+FLAG: For bridge 615A min. FL = 178.091, and FL = 178.09 (0.001 m below the minimum required).  Sheet 108, CH 1272977.99
+
+8 of 152 bridges with both values printed are flagged.

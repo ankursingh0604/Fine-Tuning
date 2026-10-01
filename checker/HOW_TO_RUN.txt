@@ -1,0 +1,37 @@
+L-SECTION PDF CHECKER
+
+Runs on this laptop. No GPU, no model, no internet, no cost.
+
+Start it (in a terminal, from the Fine-Tuning folder):
+    .venv\Scripts\python checker\app.py
+then open  http://localhost:7861  in a browser. Ctrl+C in the terminal stops it.
+
+Use it
+1. Upload a Plan & L-Section PDF (or pick one of the PDFs in the Fine-Tuning folder) and click "Check the PDF".
+   A whole drawing set takes a few seconds.
+2. The summary and the findings table appear:
+     FLAG   a value outside its requirement
+            - bridge FL below MIN FL REQ.  ("FLAG: For bridge X min. FL = .., and FL = ..")
+            - track distance below 4.725 m (IR Schedule of Dimensions, new works)
+            - proposed gradient steeper than the ruling gradient (note 6)
+     CHECK  values on the drawing that disagree
+            - data-band arithmetic: FL - GL vs cut/fill, RL - FL vs note 5 (762 mm), FL - existing FL vs difference row
+            - free board printed vs FL - HFL
+            - gradient labels vs each other and vs the FLs of the grade points
+            - plan vs L-section curve boxes; transition points vs curve box (TRL / CCL); Shift and Degree formulas
+            - plan vs L-section bridge callouts
+     INFO   incomplete or worth a look (missing proposal heights, blank callouts, blank band columns,
+            TTL differing from the simple formula on large-angle curves)
+3. Click a row to see the finding on its sheet (numbered box) and close up. Pick any sheet from the "Sheet" list.
+4. "Download the findings (CSV)" opens in Excel.
+5. Ask questions in the box at the bottom, e.g.
+     bridge 560            ground level at bridge 532       ROB-239       LC 226
+     CH 1242662.9          1240+766.8                       curve 377
+     which bridges are flagged        list all problems     summary        TBM BMT38
+   Answers come straight from the PDF's values (nearest data-band column, no interpolation) and cite the
+   sheet and chainage.
+
+Limits
+- PDFs only, and only vector PDFs (text can be selected/searched). Scanned sheets are not supported yet.
+- The layout must be the Plan & L-Section layout of these drawings; other pages are reported as
+  "Layout not recognised" instead of being checked.

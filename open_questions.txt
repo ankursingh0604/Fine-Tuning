@@ -1,0 +1,126 @@
+OPEN QUESTIONS - Mathura-Nagda 3rd Line, Detailed Plan and L-Section, Sheets 94-110
+Drawing no. AA/WCR/FLS/2616/MKN-3RD/P&P/94 to 110
+
+These could not be answered from the sheets' notes, legend or abbreviations, from the drawing's own
+numbers, or from Indian Railways references. Please answer each one, or mark it "not known".
+
+
+A. MEANING OF ITEMS ON THE SHEET
+
+1. MIN FL REQ. at bridges
+   Where no HFL is printed, MIN FL REQ. equals the existing formation level (26 of 66 bridges).
+   Where an HFL is printed, MIN FL REQ. minus HFL varies: 1.000 m (bridge 520), 1.340 m (517),
+   1.360 m (516, 518), 2.877 m (529).
+   How is MIN FL REQ. worked out where there is an HFL? For example HFL + free board + depth of
+   structure, or something else?
+
+   Answer:
+
+
+2. Station blocks at the sheet ends
+   Example, sheet 100, left end: "NAGDA STN." with "SINGORA:1190042" and "1230548.349" below it.
+   Our reading: the next station in that direction (Singora), its existing km (1190.042) and its
+   proposed chainage (1230548.349).
+   For Bayana and Bharatpur the two numbers differ by about 40.13 km, the same as the KM marks,
+   but for Singora they differ by 40.51 km.
+   Is our reading correct? Why is Singora's difference different?
+
+   Answer:
+
+
+3. KM marks under the chainage row
+   Example, sheet 100: "KM : 1240.0" with "KM:1199.869" directly below it.
+   Our reading: proposed 3rd line km (1240.0) and existing UP line km (1199.869) at the same point,
+   an offset of about 40.13 km. Is this correct?
+
+   Answer:
+
+
+4. Chainage origin (note 9)
+   Note 9 says chainages and kilometres are reckoned from the centre line of a station building as
+   0.00. Which station is that?
+
+   Answer:
+
+
+5. ROBs marked "SPACE AVAILABLE FOR PROP. LINE"
+   ROB-224 (sheet 95), ROB-232 (sheet 98), ROB-239 (sheet 100).
+   Our reading: the existing ROB already has room for the proposed line, so no extension is needed.
+   Is this correct?
+
+   Answer:
+
+
+6. Existing UP line curves on the plan (black curve tables)
+   Example, sheet 94: Curve No. 84C, Degree 0.500000, R 3500 m, TL 30.001 m, TRL 40 m, CCL 60 m,
+   TCL 140 m, Cant 40 mm, Speed 130 kmph.
+   These tables print no chainage. Is the location of the existing curves given anywhere
+   (chainage or existing km), so that a question like "is chainage X on an existing curve" can be
+   answered?
+
+   Answer:
+
+
+7. Existing UP line vertical schematic
+   Gradient segments of the proposed 3rd line show gradient, percentage and length
+   (e.g. 1:1150 F, -0.09%, 1922 M). Those of the existing UP line show only gradient and percentage,
+   no length. Is that intended?
+
+   Answer:
+
+
+8. Track distance below the minimum
+   The track distance between the proposed 3rd line and the existing UP line is less than 4.725 m
+   (the Indian Railways minimum for new works, Schedule of Dimensions) in 3 band columns; the lowest
+   is 4.629 m. Is that accepted at those locations?
+
+   Answer:
+
+
+9. Incomplete callouts
+   Some bridge proposals have no height: "1 X 6 X - RCC BOX" at bridges 520B, 533A, 546A and 549A.
+   The callout for LC-231 is blank ("- -").
+   Are these known gaps in the drawing, and what are the missing values?
+
+   Answer:
+
+
+B. POSSIBLE ERRORS IN THE DRAWINGS (please check with the drawing's authors)
+
+10. Curve 377, sheet 101
+    The L-section band box gives TRL 70.000 m and CCL 22.934 m, identical to curve 376.
+    The plan box gives TRL 80.000 m and CCL 37.671 m, and the transition points on the L-section
+    (80 / 37.671 / 80 m apart) agree with the plan.
+    Was the L-section box copied from curve 376 by mistake?
+
+    Answer:
+
+
+11. Bridges with FL below MIN FL REQ.  -- ANSWERED: flag them (no question needed).
+    8 bridges are flagged on sheets 94-110; see results/flags_min_fl.txt. Largest: bridge 532, sheet 96,
+    min. FL = 193.345 and FL = 193.059 (0.286 m below).
+
+
+12. Existing UP line gradient, sheet 101, CH 1209+900 (FL 176.472)
+    The label after this point is "1:1940 F" (falling), but the next grade point's FL is 176.764,
+    which is rising at about 1 in 1651.
+    A wrong label, or a grade point missing in between?
+
+    Answer:
+
+
+13. Existing UP line gradient, sheet 102, between CH 1212+820 and CH 1213+020
+    The same stretch is labelled "1:1200 F" after the first point and "1:745 R" before the second.
+    Which is correct?
+
+    Answer:
+
+
+14. Minor: near-level gradient labels that do not chain (sheets 103 and 105)
+    Sheet 103, proposed 3rd line: "70265.038 F" after CH 1252+016 but "2818.000 R" before CH 1252+574.
+    Sheet 105, proposed 3rd line: "99999998.831 R" (level) after CH 1263+502 and 1263+582, but
+    "6295.000 R" and "800.000 F" before the next points.
+    Probably a grade point between them that is not printed, or labels of very flat grades.
+    Only worth checking if convenient.
+
+    Answer:

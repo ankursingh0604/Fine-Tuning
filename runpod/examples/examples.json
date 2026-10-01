@@ -1,0 +1,60 @@
+[
+ {
+  "image": "r_s100_rlv561.png",
+  "question": "Does bridge 561 meet MIN FL REQ.? Work it out."
+ },
+ {
+  "image": "r_s100_rgp1239791.png",
+  "image2": "r_s100_rgp1241713.png",
+  "question": "What is the gradient of the proposed 3rd line at 1240411.1? Check it against the levels."
+ },
+ {
+  "image": "r_s100_rcv1240767.png",
+  "question": "Is CH 1240766.8 on a curve, a transition or a straight?"
+ },
+ {
+  "image": "r_s100_rbr560.png",
+  "image2": "r_s100_rbands_1242660.png",
+  "question": "What is the ground level and the cut or fill at bridge 560, and is its formation level high enough?"
+ },
+ {
+  "image": "s100_br560_lsec0.png",
+  "question": "Read the callout for bridge 560 in this crop and return its details as JSON."
+ },
+ {
+  "image": "s100_br558_lsec0.png",
+  "question": "Describe bridge 558 as shown in this crop, in plain words."
+ },
+ {
+  "image": "s100_br565_lsec0.png",
+  "question": "Does the proposed formation level at bridge 565 meet the minimum formation level required?"
+ },
+ {
+  "image": "s100_br562_lsec0.png",
+  "question": "What is the high flood level (HFL) at bridge 562?"
+ },
+ {
+  "image": "s100_tile_r0c0.png",
+  "question": "Find all bridge callouts visible in this drawing crop and give their bounding boxes as JSON."
+ },
+ {
+  "image": "s100_curve371_L-se.png",
+  "question": "Read the curve data box in this crop and return it as JSON."
+ },
+ {
+  "image": "s100_tbm.png",
+  "question": "Read the TBM details table and return every row as JSON."
+ },
+ {
+  "image": "s100_title.png",
+  "question": "Read the title block and return the sheet metadata as JSON."
+ },
+ {
+  "image": "s100_notes.png",
+  "question": "What is the ruling gradient of this section?"
+ },
+ {
+  "image": "s100_bands08.png",
+  "question": "Give every L-section data-band row for chainage 1242660 as JSON."
+ }
+]

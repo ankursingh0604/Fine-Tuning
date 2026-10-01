@@ -1,0 +1,313 @@
+<title>Railway Drawing Reader Pilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column framed like a drawing sheet; a title-block header, then findings in the order a reviewer asks for them. */
+:root {
+  --paper: #f6f7f4;
+  --panel: #ffffff;
+  --ink: #1c2226;
+  --muted: #5a656d;
+  --rule: #d3d8d3;
+  --red: #c42a20;          /* proposed work is drawn in red on the sheets: used for the fine-tuned model */
+  --grey: #8d979e;         /* existing work is black/grey: used for the untouched model */
+  --grey-bar: #b9c0c4;
+  --mark: #fbe3df;
+  --good: #1e7a4c;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121619; --panel: #1a1f23; --ink: #e5e8e6; --muted: #9ba6ad; --rule: #2d353a;
+    --red: #ff6155; --grey: #87929a; --grey-bar: #4d575e; --mark: #4a2320; --good: #52c68c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121619; --panel: #1a1f23; --ink: #e5e8e6; --muted: #9ba6ad; --rule: #2d353a;
+  --red: #ff6155; --grey: #87929a; --grey-bar: #4d575e; --mark: #4a2320; --good: #52c68c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 400 15.5px/1.6 var(--body); margin: 0; }
+.sheet { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: clamp(2rem, 5vw, 2.9rem); }
+h2 { font-size: 1.75rem; }
+h3 { font-size: 1.2rem; letter-spacing: .02em; }
+p { margin: 0; max-width: 68ch; }
+section { display: grid; gap: 16px; }
+.eyebrow { font: 500 .74rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.08rem; color: var(--ink); }
+.muted { color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+
+/* title block, drawn like the one in the corner of every sheet */
+.titleblock { border: 2px solid var(--ink); display: grid; grid-template-columns: 2fr 1fr 1fr; background: var(--panel); }
+.titleblock > div { padding: 10px 14px; border-right: 1px solid var(--ink); border-bottom: 1px solid var(--ink); min-width: 0; }
+.titleblock > div:nth-child(3n) { border-right: 0; }
+.titleblock > div:nth-last-child(-n+3) { border-bottom: 0; }
+.titleblock .k { display: block; font: 500 .66rem/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.titleblock .v { font-weight: 500; }
+.titleblock .main { grid-row: span 2; display: grid; align-content: center; gap: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: .9rem; color: var(--muted); }
+.key { display: inline-flex; align-items: center; gap: 8px; }
+.swatch { width: 26px; height: 8px; border-radius: 1px; }
+.swatch.base { background: var(--grey-bar); }
+.swatch.ft { background: var(--red); }
+
+.findings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.finding { padding: 18px 20px 18px 0; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.finding + .finding { padding-left: 20px; border-left: 1px solid var(--rule); }
+.finding .fig { font: 600 2.3rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.finding .fig .from { color: var(--grey); }
+.finding .fig .to { color: var(--red); }
+
+/* example */
+.example { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: start; }
+figure { margin: 0; display: grid; gap: 8px; }
+figure img { width: 100%; height: auto; display: block; border: 1px solid var(--rule); background: #fff; }
+figcaption { font-size: .85rem; color: var(--muted); }
+.answers { display: grid; gap: 12px; min-width: 0; }
+.answer { border-left: 3px solid var(--rule); padding: 4px 0 4px 14px; display: grid; gap: 4px; }
+.answer.base { border-color: var(--grey); }
+.answer.ft { border-color: var(--red); }
+.answer .who { font: 500 .72rem/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.answer p { font-size: .94rem; }
+mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 2px; }
+.verdict { font-size: .88rem; font-weight: 500; }
+.verdict.bad { color: var(--red); }
+.verdict.ok { color: var(--good); }
+
+/* scores */
+.scorewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); }
+table.scores { width: 100%; border-collapse: collapse; min-width: 640px; font-variant-numeric: tabular-nums; }
+.scores th, .scores td { padding: 9px 14px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--rule); }
+.scores thead th { font: 500 .7rem/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.scores tr.group td { font: 600 .95rem/1 var(--display); letter-spacing: .06em; text-transform: uppercase; background: var(--paper); padding-block: 8px; }
+.scores td.task { width: 36%; }
+.scores td.task small { display: block; color: var(--muted); font-size: .8rem; line-height: 1.35; }
+.scores td.n { width: 44px; color: var(--muted); font-family: var(--mono); font-size: .85rem; }
+.bars { display: grid; gap: 4px; }
+.bar { display: grid; grid-template-columns: 1fr 48px; align-items: center; gap: 10px; }
+.track { height: 9px; background: var(--paper); position: relative; }
+.track::before, .track::after { content: ""; position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--rule); }
+.track::before { left: 50%; } .track::after { left: 100%; }
+.fill { height: 100%; }
+.bar.base .fill { background: var(--grey-bar); }
+.bar.ft .fill { background: var(--red); }
+.bar .num { font: 500 .82rem/1 var(--mono); text-align: right; }
+.bar.base .num { color: var(--muted); }
+.axis { display: grid; grid-template-columns: 1fr 48px; gap: 10px; }
+.axis span { display: flex; justify-content: space-between; }
+.flag { display: inline-block; font: 500 .66rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--rule); padding: 3px 5px; margin-left: 6px; vertical-align: 2px; }
+
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 30px 1fr; gap: 10px; counter-increment: s; }
+.steps li::before { content: counter(s); font: 600 1.15rem/1.3 var(--display); color: var(--red); }
+.steps b { font-weight: 600; }
+ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; max-width: 72ch; }
+.note { font-size: .88rem; color: var(--muted); }
+/* question cards */
+.qa-list { display: grid; gap: 14px; counter-reset: q; }
+.qa { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; padding: 16px; background: var(--panel); border: 1px solid var(--rule); counter-increment: q; }
+.qa img { width: 100%; height: auto; display: block; border: 1px solid var(--rule); background: #fff; }
+.qa .body { display: grid; gap: 10px; min-width: 0; }
+.qa .qhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.qa .qhead::before { content: "Q" counter(q); font: 600 1.15rem/1 var(--display); color: var(--red); }
+.qa .qtext { font-weight: 500; flex: 1 1 280px; min-width: 0; }
+.qa .kind { font: 500 .66rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--rule); padding: 3px 5px; }
+.qa .rows { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 8px 12px; align-items: start; }
+.qa .who { font: 500 .7rem/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.qa .ans { font-size: .9rem; min-width: 0; overflow-wrap: anywhere; }
+.qa pre { margin: 0; font: 400 .8rem/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.qa .v { display: inline-block; margin-top: 4px; font: 500 .7rem/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; padding: 3px 6px; border-radius: 2px; }
+.v.ok { color: var(--good); border: 1px solid var(--good); }
+.v.part { color: var(--muted); border: 1px solid var(--muted); }
+.v.bad { color: var(--red); border: 1px solid var(--red); }
+.qa .why { font-size: .84rem; color: var(--muted); }
+@media (max-width: 760px) {
+  .qa { grid-template-columns: 1fr; }
+  .qa img { max-width: 360px; }
+  .qa .rows { grid-template-columns: 1fr; gap: 2px; }
+  .qa .rows .who { margin-top: 8px; }
+}
+footer { border-top: 1px solid var(--rule); padding-top: 14px; font-size: .82rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 24px; }
+
+@media (max-width: 760px) {
+  .titleblock { grid-template-columns: 1fr 1fr; }
+  .titleblock .main { grid-column: 1 / -1; grid-row: auto; border-right: 0; }
+  .titleblock > div:nth-child(3n) { border-right: 1px solid var(--ink); }
+  .titleblock > div:nth-child(2n+1):not(.main) { border-right: 0; }
+  .titleblock > div:nth-last-child(-n+3) { border-bottom: 1px solid var(--ink); }
+  .titleblock > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .findings { grid-template-columns: 1fr; }
+  .finding, .finding + .finding { padding: 16px 0; border-left: 0; }
+  .finding + .finding { border-top: 1px solid var(--rule); }
+  .example, .two { grid-template-columns: 1fr; }
+}
+</style>
+
+<main class="sheet">
+
+  <header style="display:grid; gap:18px;">
+    <div class="titleblock">
+      <div class="main">
+        <span class="eyebrow">Pilot result</span>
+        <h1>Teaching a small vision model to read railway drawings</h1>
+      </div>
+      <div><span class="k">Model</span><span class="v">Qwen2.5-VL-3B + LoRA adapter</span></div>
+      <div><span class="k">Trained on</span><span class="v">RunPod L4 GPU, about 1 hour</span></div>
+      <div><span class="k">Drawings</span><span class="v">Mathura–Nagda 3rd line, Plan &amp; L-Section sheets 94–102</span></div>
+      <div><span class="k">Tested on</span><span class="v">Sheet 100, never seen in training</span></div>
+      <div><span class="k">Prepared by</span><span class="v">Ankur Singh</span></div>
+      <div><span class="k">Date</span><span class="v mono">30-09-2026</span></div>
+      <div><span class="k">Status</span><span class="v">v1 results · v2 run prepared</span></div>
+    </div>
+    <div class="legend">
+      <span class="key"><span class="swatch base"></span>Untouched model (existing)</span>
+      <span class="key"><span class="swatch ft"></span>Fine-tuned model (proposed), in red as on the drawings</span>
+    </div>
+  </header>
+
+  <section>
+    <p class="lede">We fine-tuned a 3-billion-parameter vision-language model on seven sheets of one Plan &amp; L-Section drawing set and tested it on a sheet it had never seen. Out of the box the model can read text but misreads which values belong to which bridge and invents details. After about one hour of training it gets the values right on every test question that asks it to read a bridge callout, level block, curve box, benchmark table or title block.</p>
+    <div class="findings">
+      <div class="finding">
+        <span class="fig"><span class="from">55%</span> → <span class="to">100%</span></span>
+        <span>of the values on a bridge callout read correctly (EXG FL, HFL, span, proposal, chainage)</span>
+      </div>
+      <div class="finding">
+        <span class="fig"><span class="from">13%</span> → <span class="to">100%</span></span>
+        <span>of empty crops correctly answered "no bridge here"; the untouched model invents one 7 times in 8</span>
+      </div>
+      <div class="finding">
+        <span class="fig"><span class="from">0%</span> → <span class="to">38%</span></span>
+        <span>of named bridges boxed correctly. This is the weak spot, and the fix is in the v2 run</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">One test question, three answers</span>
+    <h2>Bridge No. 558 on sheet 100</h2>
+    <div class="example">
+      <figure>
+        <img src="{{IMG_bridge558}}" alt="L-section crop of sheet 100 showing the 45-degree callout and level block for bridge No. 558, an arch over a drain to be extended as a 1 x 2 x 2 RCC box">
+        <figcaption>The crop the model was given: the L-section callout and level block for bridge 558, rendered at 150 dpi.</figcaption>
+      </figure>
+      <div class="answers">
+        <p class="muted" style="font-size:.92rem">Question: <em>Describe bridge 558 as shown in this crop, in plain words.</em></p>
+        <div class="answer">
+          <span class="who">What the drawing says</span>
+          <p>Existing arch, 1 span of 0.61 m over a drain, centre line at chainage 1242424.493 m, minor bridge. To be extended as a 1 × 2 × 2 m RCC box. EXG FL 180.722, MIN FL REQ. 180.485, FL 180.724, B.L 179.495.</p>
+        </div>
+        <div class="answer base">
+          <span class="who">Untouched model</span>
+          <p>Bridge No. 558 is a minor bridge that is to be extended <mark>from its current location at CH: 1242323.998 to its new location at CH: 1242344.493</mark>. The extension will involve <mark>extending the bridge by 1 meter in length and increasing its width by 0.61 meters</mark>. The bridge will be constructed using a 1x2x2 RCC box.</p>
+          <span class="verdict bad">Both chainages and both dimensions are invented. No levels, no structure type, no crossing.</span>
+        </div>
+        <div class="answer ft">
+          <span class="who">Fine-tuned model</span>
+          <p>Bridge No. 558 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242424.493 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.722, minimum formation level required (MIN FL REQ.) 180.485, proposed formation level (FL) 180.724, bed level (B.L) 179.495.</p>
+          <span class="verdict ok">Every value matches the drawing.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Fifteen test questions</span>
+    <h2>Questions and answers from sheet 100</h2>
+    <p class="muted">Fifteen of the 83 test questions, one or two of each kind, with the image the model was given. Each verdict was checked by reading the answer against the drawing. Of these 15, the fine-tuned model gets 12 right, 1 partly right and 2 wrong; the untouched model gets 6 right, 1 partly right and 8 wrong. Where the answer is a box, the image shows the correct box in green and the fine-tuned model's box in red. All 83 questions and answers are in <code>results/test_answers_v1.csv</code>.</p>
+    <div class="qa-list">
+{{QA}}
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Scores on the unseen test sheet</span>
+    <h2>Before and after, by task</h2>
+    <p class="muted">83 test questions from sheet 100. Reading scores count values that appear correctly in the answer, so the untouched model is not marked down just for using its own JSON field names. Box scores count a box as found when it overlaps the true box by at least half (IoU ≥ 0.5).</p>
+    <div class="scorewrap">
+      <table class="scores">
+        <thead>
+          <tr><th>Task</th><th>n</th><th><div class="axis"><span><span>0</span><span>50%</span><span>100%</span></span><span></span></div></th></tr>
+        </thead>
+        <tbody>
+{{ROWS}}
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Flagged rows say less than their bars suggest. Every test reference for the level check is "Yes", so it is scored only when both levels are also quoted correctly. The notes and abbreviations are identical on every sheet, so those rows measure memory, not reading.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Finding bridges on the sheet</span>
+    <h2>Boxes are precise when it picks the right callout</h2>
+    <div class="two">
+      <figure>
+        <img src="{{IMG_tile}}" alt="Alignment-plan crop of sheet 100 with three green boxes drawn by the fine-tuned model around the plan callouts of bridges 554, 555 and 555A">
+        <figcaption>Fine-tuned model, asked to find every bridge callout in a plan crop of sheet 100. All three found and labelled correctly; the boxes overlap the true ones by 91–99%.</figcaption>
+      </figure>
+      <div style="display:grid; gap:12px;">
+        <p>Asked to box one named bridge, the fine-tuned model got 3 of 8 right, and those three boxes were near exact (overlap 74–98%). The misses have two causes.</p>
+        <ul class="plain">
+          <li><b>An ambiguous question on our side.</b> "Where is the callout for bridge 562?" does not say plan or L-section, and one crop can hold both, plus the level block. Three misses boxed the level block instead.</li>
+          <li><b>Too few examples.</b> Training had only 48 grounding questions. One miss boxed the neighbouring bridge (555 instead of 555A).</li>
+        </ul>
+        <p>The v2 dataset names the view in every question and has 237 grounding examples instead of 48, with everything else left unchanged.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Method</span>
+    <h2>How it was built</h2>
+    <div class="two">
+      <ol class="steps">
+        <li><div><b>Annotations from the PDF itself.</b> The sheets are a vector CAD export, so every callout, level block, curve box and table is real text with coordinates. A script reads them into structured records: 80 bridge records, 77 curve boxes, TBM tables, notes and title blocks. No hand labelling, and every value is exactly what is printed.</div></li>
+        <li><div><b>Crops and questions.</b> Sheets rendered at 150 dpi (callout text about 20 px tall), cut into 1008 px tiles plus crops around each bridge, curve and table. The records become 1,041 training questions: read this bridge as JSON, explain it, find it, check its levels.</div></li>
+        <li><div><b>Split by sheet.</b> Sheet 96 for validation, sheet 100 for the test, never trained on. Bridges repeated past a match line are kept out of training too.</div></li>
+        <li><div><b>LoRA fine-tuning.</b> 41 million adapter weights (1.1% of the model) trained for 2 epochs on one rented L4 GPU, about one hour at $0.50 per hour. The base model stays unchanged.</div></li>
+        <li><div><b>Scored before and after</b> on the same test questions, with the untouched model as the baseline.</div></li>
+      </ol>
+      <figure>
+        <img src="{{IMG_loss}}" alt="Training and validation loss by step: training loss falls from 1.17 to about 0.02, validation loss falls from 0.155 at step 50 to about 0.05 and flattens">
+        <figcaption>Loss by training step. Validation loss, measured on a sheet the model never trains on, falls steadily and flattens without rising: it learned the drawing conventions rather than memorising the training sheets.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>What this does not show yet</h2>
+    <ul class="plain">
+      <li><b>One drawing set, one consultant's layout.</b> Other layouts, and General Arrangement Drawings, are untested.</li>
+      <li><b>Small test.</b> 83 questions, one to eight per task. The v2 run scores all 232 test questions.</li>
+      <li><b>The "find all bridges" score covers empty crops only</b>, because the random sample drew no crop with a bridge in it. The one full crop checked by hand (above) was right.</li>
+      <li><b>Explanations follow a learned template.</b> The model reproduces the dataset's phrasing. Values are read from the image, but the wording is not the model's own.</li>
+      <li><b>No engineering judgement.</b> It reads what is printed. Checks like span against HFL should be done in code on the values it extracts.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Next</span>
+    <h2>Next steps</h2>
+    <ol class="steps">
+      <li><div><b>v2 run, ready to start.</b> Retrain on the fixed grounding data and score the untouched model, v1 and v2 on all 232 test questions in one comparison. About 2 hours on the same GPU, roughly $1.</div></li>
+      <li><div><b>General Arrangement Drawings.</b> Add GAD sheets to teach bridge components (pier, abutment, pile cap, bearing, wing wall). If they are vector PDFs, the same text-layer method labels them.</div></li>
+      <li><div><b>A second drawing set</b> from another section or consultant, to test whether the model generalises beyond one layout.</div></li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>Base model: Qwen2.5-VL-3B-Instruct</span>
+    <span>Adapter: LoRA rank 16, 16-bit base, 262 steps</span>
+    <span>Data: 577 images, 1,041 train / 144 val / 176 test questions (v1)</span>
+  </footer>
+</main>

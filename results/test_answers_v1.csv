@@ -1,0 +1,721 @@
+﻿id,task,image,question,correct_answer,base_answer,base_verdict_auto,finetuned_answer,finetuned_verdict_auto,base_verdict_checked,finetuned_verdict_checked
+s100_0173,abbr_qa,images/s100_abbr.png,What does EVC stand for on this drawing?,EVC stands for End of Vertical Curve.,"EVC stands for ""End of Vertical Curve.""",correct,EVC stands for End of Vertical Curve.,correct,,
+s100_0174,abbr_qa,images/s100_abbr.png,What does CTP2 stand for on this drawing?,CTP2 stands for Curve Tangent Point-2.,"In the context of railway engineering, CTP2 stands for ""Curve Tangent Point-2."" This is one of several key points used in the design and construction of railway curves.",correct,CTP2 stands for Curve Tangent Point-2.,correct,,
+s100_0172,abbr_qa,images/s100_abbr.png,What does SL stand for on this drawing?,SL stands for Straight Line Length.,"In the context of railway engineering, ""SL"" stands for ""Straight Line Length."" This abbreviation refers to the length of a straight section of track between two points where the track changes direction.",correct,SL stands for Straight Line Length.,correct,,
+s100_0087,bridge_explain,images/s100_br558_lsec0.png,"Describe bridge 558 as shown in this crop, in plain words.","Bridge No. 558 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242424.493 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.722, minimum formation level required (MIN FL REQ.) 180.485, proposed formation level (FL) 180.724, bed level (B.L) 179.495.",Bridge No. 558 is a minor bridge that is to be extended from its current location at CH: 1242323.998 to its new location at CH: 1242344.493. The extension will involve extending the bridge by 1 meter in length and increasing its width by 0.61 meters. The bridge will be constructed using a 1x2x2 RCC box.,wrong,"Bridge No. 558 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242424.493 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.722, minimum formation level required (MIN FL REQ.) 180.485, proposed formation level (FL) 180.724, bed level (B.L) 179.495.",correct,,
+s100_0116,bridge_explain,images/s100_br562_lsec0.png,"Describe bridge 562 as shown in this crop, in plain words.","Bridge No. 562 is an existing RCC slab of 3 spans of 3.66 m over a drain, with its centre line at chainage 1243059.891 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as 3 spans of 3.66 m, PSC SLAB (written 3 X 3.66 - PSC SLAB). On the L-section: existing formation level (EXG FL) 181.122, minimum formation level required (MIN FL REQ.) 181.122, proposed formation level (FL) 181.162, bed level (B.L) 177.602.","Bridge No. 562 is an extended structure that is part of the existing bridge (EXG BR. NO. 562). It has a length of 3 meters and a width of 3.66 meters. The bridge is designed to support traffic and is likely made of reinforced concrete (RCC). The bridge is located at a specific point along the road (CH: 1243893.891), and it is part of a larger infrastructure project.",wrong,"Bridge No. 562 is an existing RCC slab of 3 spans of 3.66 m over a drain, with its centre line at chainage 1243059.891 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a PSC SLAB of 3 cells, 3.66 m wide (height not given on the drawing) (written 3 X 3.66 - PSC SLAB). On the L-section: existing formation level (EXG FL) 181.122, minimum formation level required (MIN FL REQ.) 181.122, proposed formation level (FL) 181.162, bed level (B.L) 177.602.",correct,wrong: chainage and dimensions invented,"values right, but calls the 3 slab spans ""cells"" as if it were a box"
+s100_0114,bridge_explain,images/s100_br561_plan0.png,"Describe bridge 561 as shown in this crop, in plain words.","Bridge No. 561 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242982.821 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).",Bridge No. 561 is an arch bridge that is being extended to a length of 1 x 2 x 2 meters. The bridge is made of reinforced concrete (RCC) and has a height of 0.61 meters. The bridge is located at kilometer mark 1243+000 and is marked on the railway track.,partly right (67% of values),"Bridge No. 561 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242982.821 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).",correct,,
+s100_0101,bridge_explain,images/s100_br560_lsec0.png,"Describe bridge 560 as shown in this crop, in plain words.","Bridge No. 560 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242662.9 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.722, minimum formation level required (MIN FL REQ.) 180.406, proposed formation level (FL) 180.724, bed level (B.L) 179.416.","Bridge No. 560 is an arch bridge with the following specifications:
+- It has a span of 1 x 2 x 2 RCC box.
+- The length of the existing bridge (EXG BR. NO. 560) is 180.722 meters.
+- The minimum required length (MIN FL REQ.) is 180.406 meters.
+- The clear span (FL) is 180.724 meters.
+- The total length (B.L.) is 179.416 meters.",partly right (71% of values),"Bridge No. 560 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242662.9 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.722, minimum formation level required (MIN FL REQ.) 180.406, proposed formation level (FL) 180.724, bed level (B.L) 179.416.",correct,,
+s100_0092,bridge_explain,images/s100_br558_plan0.png,"Describe bridge 558 as shown in this crop, in plain words.","Bridge No. 558 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242424.493 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).","Bridge No. 558 is an arch bridge that is part of the railway line. It has a span length (L) of approximately 124 meters and is designed to support the railway track. The bridge is located at kilometer point 1242.3998 on the railway line. The bridge is supported by two arches, each with a height of about 6.1 meters. The bridge is also equipped with drainage systems to ensure proper water management during construction and operation.",wrong,"Bridge No. 558 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242424.493 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).",correct,,
+s100_0142,bridge_explain,images/s100_br564_plan0.png,"Describe bridge 564 as shown in this crop, in plain words.","Bridge No. 564 is an existing box of 1 span of 3.66 m over a stream, with its centre line at chainage 1244173.905 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 4 m wide x 3.4 m high (written 1 X 4 X 3.4 - RCC BOX).",Bridge No. 564 is a box culvert with dimensions of 1 meter wide and 3.66 meters high. It is located at kilometer 1244+000 and is marked on the railway embankment near the track. The bridge is to be extended as a reinforced concrete (RCC) box (minor). The bottom of the bridge is 221.688 meters above ground level.,partly right (50% of values),"Bridge No. 564 is an existing box of 1 span of 3.66 m over a stream, with its centre line at chainage 1244173.905 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 4 m wide x 3.4 m high (written 1 X 4 X 3.4 - RCC BOX).",correct,,
+s100_0099,bridge_explain,images/s100_br559_plan0.png,Explain what this drawing says about bridge 559.,"Bridge No. 559 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242470.555 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).","The drawing provides detailed information about the alignment and specifications of Bridge No. 559, which is part of the railway line. Here's a breakdown of the key points:
+
+1. **Location and Alignment**:
+   - The bridge is located at a specific point along the railway line.
+   - The coordinates provided (CH1242330) indicate the exact location on the railway track.
+
+2. **Design Specifications**:
+   - The bridge is designed to be an RCC (Reinforced Concrete) box structure.
+   - The dimensions specified for the bridge are 1 x 2 x 2 meters, indicating its cross-sectional dimensions.
+
+3. **Structural Details**:
+   - The bridge is intended to be extended as an RCC box structure.
+   - The extension will be 1 x 2 x 2 meters, maintaining the same dimensions as the original structure.
+
+4. **Additional Information**:
+   - There is a mention of ""C/L OF EXG. BR. NO. 560 ARCH - 1 X 0.61"" and ""C/L OF EXG. ROB MDR"", which likely refer to other structures or components related to the railway line.
+   - The drawing also includes details about drainage and other infrastructure elements.
+
+Overall, the drawing provides a comprehensive overview of the design, dimensions, and structural requirements of Bridge No. 559, ensuring that it meets the necessary standards for the railway line",partly right (67% of values),"Bridge No. 559 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1242470.555 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX).",correct,,
+s100_0123,bridge_explain,images/s100_br563_lsec0.png,"Describe bridge 563 as shown in this crop, in plain words.","Bridge No. 563 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1243357.887 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.646, minimum formation level required (MIN FL REQ.) 180.311, proposed formation level (FL) 180.764, bed level (B.L) 179.301.",Bridge No. 563 is a minor bridge that needs to be extended. It is located at the intersection of two roads: EXG BR. No. 561 and EXG ROB-239. The bridge has an existing formation profile with a minimum required flatness (FL) of 180.311 meters and a length (L) of 179.301 meters. The proposed extension will increase the flatness to 180.725 meters and the length to 180.646 meters.,partly right (57% of values),"Bridge No. 563 is an existing arch of 1 span of 0.61 m over a drain, with its centre line at chainage 1243357.887 m. It is classified as a minor bridge. For the proposed 3rd line it is to be extended as a RCC BOX of 1 cell, 2 m wide x 2 m high (written 1 X 2 X 2 - RCC BOX). On the L-section: existing formation level (EXG FL) 180.646, minimum formation level required (MIN FL REQ.) 180.311, proposed formation level (FL) 180.764, bed level (B.L) 179.301.",correct,,
+s100_0008,bridge_ground,images/s100_tile_r0c4.png,"Locate bridge 559's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [279, 352, 390, 819], ""label"": ""bridge 559 (plan callout)""}
+]
+```","[304, 167, 380, 180], ""label"": ""bridge 559""}",wrong box,"```json
+[
+  {""bbox_2d"": [328, 350, 473, 867], ""label"": ""bridge 559 (plan callout)""}
+]
+```",wrong box,,
+s100_0034,bridge_ground,images/s100_tile_r3c6.png,"Locate bridge 562's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [16, 0, 397, 378], ""label"": ""bridge 562 (L-section callout)""}
+]
+```","[0, 394, 17, 408], ""label"": ""bridge 562""}",wrong box,"```json
+[
+  {""bbox_2d"": [40, 300, 191, 534], ""label"": ""bridge 562 (plan callout)""}
+]
+```",wrong box,,
+s100_0006,bridge_ground,images/s100_tile_r0c3.png,Where is the callout for bridge 557 in this image? Answer with a JSON bbox.,"```json
+[
+  {""bbox_2d"": [810, 403, 923, 870], ""label"": ""bridge 557 (plan callout)""}
+]
+```","```json
+[
+	{""bbox_2d"": [498, 610, 630, 628], ""label"": ""callout for bridge 557""}
+]
+```",wrong box,"```json
+[
+  {""bbox_2d"": [814, 403, 921, 869], ""label"": ""bridge 557 (plan callout)""}
+]
+```",correct box,wrong box,correct box
+s100_0009,bridge_ground,images/s100_tile_r0c4.png,"Locate bridge 560's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [530, 335, 637, 802], ""label"": ""bridge 560 (plan callout)""}
+]
+```","[378, 498, 458, 530]",wrong box,"```json
+[
+  {""bbox_2d"": [530, 337, 638, 804], ""label"": ""bridge 560 (plan callout)""}
+]
+```",correct box,,
+s100_0035,bridge_ground,images/s100_tile_r3c6.png,"Locate bridge 563's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [247, 15, 629, 376], ""label"": ""bridge 563 (L-section callout)""}
+]
+```","[0, 408, 179, 424]",wrong box,"```json
+[
+  {""bbox_2d"": [270, 412, 453, 530], ""label"": ""bridge 563 (plan callout)""}
+]
+```",wrong box,,
+s100_0027,bridge_ground,images/s100_tile_r3c1.png,"Locate bridge 555A's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [236, 14, 619, 377], ""label"": ""bridge 555A (L-section callout)""}
+]
+```","[308, 406, 379, 420]",wrong box,"```json
+[
+  {""bbox_2d"": [234, 10, 537, 360], ""label"": ""bridge 555A (L-section callout)""}
+]
+```",correct box,,
+s100_0002,bridge_ground,images/s100_tile_r0c0.png,"Locate bridge 555A's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [815, 266, 922, 732], ""label"": ""bridge 555A (plan callout)""}
+]
+```","```json
+{
+    ""bbox_2d"": [684, 370, 890, 400],
+    ""label"": ""bridge 555A""
+}
+```",wrong box,"```json
+[
+  {""bbox_2d"": [699, 287, 749, 713], ""label"": ""bridge 555A (plan callout)""}
+]
+```",wrong box,wrong box,"wrong box: on bridge 555, the one next to it"
+s100_0036,bridge_ground,images/s100_tile_r3c6.png,"Locate bridge ROB-239's label. Output {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.","```json
+[
+  {""bbox_2d"": [494, 41, 835, 378], ""label"": ""bridge ROB-239 (L-section callout)""}
+]
+```","[450, 267, 580, 280]",wrong box,"```json
+[
+  {""bbox_2d"": [498, 275, 660, 376], ""label"": ""bridge ROB-239 (plan callout)""}
+]
+```",wrong box,,
+s100_0147,bridge_json,images/s100_br565_plan0.png,"Extract the existing structure, span, crossing, proposal, category and chainage for bridge 565 as JSON.","```json
+{""bridge_id"": ""565"", ""existing_type"": ""RCC SLAB"", ""existing_span"": ""1 X 2.46"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 3 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1244962.976}
+```","```json
+{
+  ""existing_structure"": ""C/L OF EXG. BR. NO. 565 RCC SLAB - 1 X 2.46- DRAIN"",
+  ""span"": ""1 X 3 X 2 - RCC BOX"",
+  ""crossing"": ""(MINOR) AT CH: 1244962.976"",
+  ""proposal"": ""PRO TO BE EXTENDED AS"",
+  ""category"": ""TBM - BM34 Marked on the Small EP Line Box Near EP Pole. ELEV. - 220.688"",
+  ""chainage"": ""CH:1244990 KM:1245+000""
+}
+```","values present, not in the requested fields","```json
+{""bridge_id"": ""565"", ""existing_type"": ""RCC SLAB"", ""existing_span"": ""1 X 2.46"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 3 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1244962.976}
+```",correct,"wrong: values put in the wrong fields, a TBM label given as the category",correct
+s100_0086,bridge_json,images/s100_br558_lsec0.png,Give the data written for bridge no. 558 on this drawing as structured JSON.,"```json
+{""bridge_id"": ""558"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1242424.493, ""levels"": {""existing_formation_level"": 180.722, ""min_formation_level_required"": 180.485, ""proposed_formation_level"": 180.724, ""bed_level"": 179.495}}
+```","```json
+{
+  ""bridge_number"": 558,
+  ""exterior_floor_level"": 180.722,
+  ""minimum_floor_required"": 180.485,
+  ""length"": 179.495,
+  ""length_in_feet"": 179.495 * 3.28084,
+  ""length_in_inches"": (179.495 - 179.013) * 12
+}
+```",wrong,"```json
+{""bridge_id"": ""558"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1242424.493, ""levels"": {""existing_formation_level"": 180.722, ""min_formation_level_required"": 180.485, ""proposed_formation_level"": 180.724, ""bed_level"": 179.495}}
+```",correct,,
+s100_0120,bridge_json,images/s100_br562_plan0.png,"Extract the existing structure, span, crossing, proposal, category and chainage for bridge 562 as JSON.","```json
+{""bridge_id"": ""562"", ""existing_type"": ""RCC SLAB"", ""existing_span"": ""3 X 3.66"", ""crossing"": ""DRAIN"", ""proposal"": ""3 X 3.66 - PSC SLAB"", ""category"": ""MINOR"", ""chainage_m"": 1243059.891}
+```","```json
+{
+  ""existing_structure"": ""C/L OF EXG. BR. NO. 562 ARCH - 1 X 0.61 - DRAIN"",
+  ""span"": ""PRO TO BE EXTENDED AS 1 X 2 X 2 - RCC BOX (MINOR) AT CH: 1242882.9"",
+  ""crossing"": ""KM: 1243+000 DRAIN"",
+  ""proposal"": ""C/L OF EXG. BR. NO. 562 RCC SLAB - 3 X 3.66 - PSC SLAB"",
+  ""category"": ""TBM - BM36 Marked on the Railway EP Bottom Near Railway Track. ELEV. - 222.688"",
+  ""chainage"": ""CH1243050""
+}
+```",partly right (86% of values),"```json
+{""bridge_id"": ""562"", ""existing_type"": ""RCC SLAB"", ""existing_span"": ""3 X 3.66"", ""crossing"": ""DRAIN"", ""proposal"": ""3 X 3.66 - PSC SLAB"", ""category"": ""MINOR"", ""chainage_m"": 1243059.891}
+```",correct,,
+s100_0134,bridge_json,images/s100_br564_lsec0.png,Give the data written for bridge no. 564 on this drawing as structured JSON.,"```json
+{""bridge_id"": ""564"", ""existing_type"": ""BOX"", ""existing_span"": ""1 X 3.66"", ""crossing"": ""STREAM"", ""proposal"": ""1 X 4 X 3.4 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1244173.905, ""levels"": {""existing_formation_level"": 180.62, ""min_formation_level_required"": 180.703, ""proposed_formation_level"": 180.724, ""bed_level"": 176.853, ""high_flood_level"": 178.871, ""free_board"": 1.854}}
+```","```json
+{
+  ""bridge_no"": 564,
+  ""existing_fl"": 180.62,
+  ""min_fl_req"": 180.703,
+  ""fl"": 180.724,
+  ""b_l"": 176.853,
+  ""h_fl"": 178.871,
+  ""f_b"": 1.854
+}
+```",partly right (54% of values),"```json
+{""bridge_id"": ""564"", ""existing_type"": ""BOX"", ""existing_span"": ""1 X 3.66"", ""crossing"": ""STREAM"", ""proposal"": ""1 X 4 X 3.4 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1244173.905, ""levels"": {""existing_formation_level"": 180.62, ""min_formation_level_required"": 180.703, ""proposed_formation_level"": 180.724, ""bed_level"": 176.853, ""high_flood_level"": 178.871, ""free_board"": 1.854}}
+```",correct,,
+s100_0128,bridge_json,images/s100_br563_plan0.png,"Extract the existing structure, span, crossing, proposal, category and chainage for bridge 563 as JSON.","```json
+{""bridge_id"": ""563"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1243357.887}
+```","```json
+{
+  ""existing_structure"": {
+    ""type"": ""ARCH"",
+    ""number"": ""563"",
+    ""length"": ""1 x 0.61""
+  },
+  ""span"": {
+    ""type"": ""RCC BOX"",
+    ""number"": ""1"",
+    ""length"": ""2 x 2""
+  },
+  ""crossing"": {
+    ""type"": ""DRAIN"",
+    ""chainage"": ""KM: 1243+000""
+  },
+  ""proposal"": {
+    ""type"": ""PRO TO BE EXTENDED AS 1 X 2 X 2 - RCC BOX"",
+    ""minor"": true,
+    ""chainage"": ""CH: 1242982.821""
+  },
+  ""category"": ""MINOR"",
+  ""chainage"": ""KM: 1243+000""
+}
+```",partly right (86% of values),"```json
+{""bridge_id"": ""563"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1243357.887}
+```",correct,,
+s100_0072,bridge_json,images/s100_br555A_lsec0.png,Read the callout for bridge 555A in this crop and return its details as JSON.,"```json
+{""bridge_id"": ""555A"", ""existing_type"": ""BOX"", ""existing_span"": ""1 X 4"", ""crossing"": ""BT ROAD"", ""proposal"": ""1 X 4 X 4 - RCC BOX"", ""category"": ""RUB/LHS"", ""chainage_m"": 1240172.232, ""levels"": {""existing_formation_level"": 182.338, ""min_formation_level_required"": 182.338, ""proposed_formation_level"": 182.34}}
+```","```json
+{
+  ""bridge"": {
+    ""number"": 555A,
+    ""location"": {
+      ""start"": {
+        ""coordinate"": [1240788.982, 1240788.982],
+        ""length"": 182.34
+      },
+      ""end"": {
+        ""coordinate"": [1240788.982, 1240788.982],
+        ""length"": 182.34
+      }
+    },
+    ""features"": [
+      {
+        ""type"": ""RCC BOX"",
+        ""dimensions"": {
+          ""width"": 1,
+          ""height"": 4,
+          ""depth"": 4
+        },
+        ""coordinates"": {
+          ""start"": [1240788.982, 1240788.982],
+          ""end"": [1240788.982, 1240788.982]
+        }
+      }
+    ]
+  }
+}
+```",wrong,"```json
+{""bridge_id"": ""555A"", ""existing_type"": ""BOX"", ""existing_span"": ""1 X 4"", ""crossing"": ""BT ROAD"", ""proposal"": ""1 X 4 X 4 - RCC BOX"", ""category"": ""RUB/LHS"", ""chainage_m"": 1240172.232, ""levels"": {""existing_formation_level"": 182.338, ""min_formation_level_required"": 182.338, ""proposed_formation_level"": 182.34}}
+```",correct,,
+s100_0091,bridge_json,images/s100_br558_plan0.png,Give the data written for bridge no. 558 on this drawing as structured JSON.,"```json
+{""bridge_id"": ""558"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1242424.493}
+```","```json
+{
+  ""Bridge No."": 558,
+  ""Type"": ""RCC SLAB"",
+  ""Size"": ""1 x 2 x 2"",
+  ""Location"": ""CH: 124242.998""
+}
+```",wrong,"```json
+{""bridge_id"": ""558"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1242424.493}
+```",correct,,
+s100_0070,bridge_json,images/s100_br555_plan0.png,Give the data written for bridge no. 555 on this drawing as structured JSON.,"```json
+{""bridge_id"": ""555"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1240143.24}
+```","```json
+{
+  ""bridge_no"": 555,
+  ""type"": ""ARCH"",
+  ""length"": 0.61,
+  ""extension"": {
+    ""type"": ""RCC BOX"",
+    ""dimensions"": [1, 2, 2]
+  },
+  ""location"": {
+    ""coordinate"": ""CH: 1240033687""
+  }
+}
+```",wrong,"```json
+{""bridge_id"": ""555"", ""existing_type"": ""ARCH"", ""existing_span"": ""1 X 0.61"", ""crossing"": ""DRAIN"", ""proposal"": ""1 X 2 X 2 - RCC BOX"", ""category"": ""MINOR"", ""chainage_m"": 1240143.24}
+```",correct,,
+s100_0145,bridge_level_check,images/s100_br565_lsec0.png,Does the proposed formation level at bridge 565 meet the minimum formation level required?,"Yes. The proposed formation level is 180.159 and the minimum required is 179.95, so it is 0.209 m above the requirement.","Yes, the proposed formation level at bridge 565 meets the minimum formation level required. The minimum formation level (MIN FL REQ.) is given as 179.95, and the actual formation level (FL) is 180.159. Since 180.159 is greater than 179.95, the proposed formation level meets the requirement.",correct,"Yes. The proposed formation level is 180.159 and the minimum required is 179.95, so it is 0.209 m above the requirement.",correct,correct,correct
+s100_0067,bridge_level_check,images/s100_br555_lsec0.png,"At bridge 555, is the proposed FL above the MIN FL REQ.? Show the numbers.","Yes. The proposed formation level is 182.365 and the minimum required is 182.363, so it is 0.002 m above the requirement.","Yes, the proposed FL for Bridge No. 555 is above the MIN FL REQ.
+
+- EXG FL = 182.364
+- MIN FL REQ. = 182.363
+
+The proposed FL (182.364) is greater than the MIN FL REQ. (182.363).",wrong,"Yes. The proposed formation level is 182.365 and the minimum required is 182.363, so it is 0.002 m above the requirement.",correct,,
+s100_0095,bridge_level_check,images/s100_br559_lsec0.png,"At bridge 559, is the proposed FL above the MIN FL REQ.? Show the numbers.","Yes. The proposed formation level is 180.724 and the minimum required is 180.218, so it is 0.506 m above the requirement.","Yes, at bridge No. 559, the proposed FL (Floor Level) is above the MIN FL REQ. The values are as follows:
+
+- EXG FL = 180.722
+- MIN FL REQ. = 180.218
+
+The proposed FL (180.722) is greater than the MIN FL REQ. (180.218).",wrong,"Yes. The proposed formation level is 180.724 and the minimum required is 180.218, so it is 0.506 m above the requirement.",correct,,
+s100_0109,bridge_level_check,images/s100_br561_lsec0.png,"At bridge 561, is the proposed FL above the MIN FL REQ.? Show the numbers.","Yes. The proposed formation level is 181.135 and the minimum required is 180.904, so it is 0.231 m above the requirement.","Yes, the proposed FL (Floor Level) for Bridge No. 561 is above the MIN FL REQ. The values are as follows:
+
+- EXG FL = 181.086
+- MIN FL REQ. = 180.904
+
+The difference between the EXG FL and the MIN FL REQ. is 0.182 meters.",wrong,"Yes. The proposed formation level is 181.135 and the minimum required is 180.904, so it is 0.231 m above the requirement.",correct,,
+s100_0136,bridge_level_check,images/s100_br564_lsec0.png,Does the proposed formation level at bridge 564 meet the minimum formation level required?,"Yes. The proposed formation level is 180.724 and the minimum required is 180.703, so it is 0.021 m above the requirement. The free board shown is 1.854 m (FL 180.724 minus HFL 178.871 = 1.853 m).","Yes, the proposed formation level at bridge 564 meets the minimum formation level required. The minimum formation level (MIN FL REQ.) is 180.703 feet, and the proposed formation level (FL) is 180.724 feet.",correct,"Yes. The proposed formation level is 180.724 and the minimum required is 180.703, so it is 0.021 m above the requirement. The free board shown is 1.854 m (FL 180.724 minus HFL 178.871 = 1.853 m).",correct,,
+s100_0074,bridge_level_check,images/s100_br555A_lsec0.png,"At bridge 555A, is the proposed FL above the MIN FL REQ.? Show the numbers.","Yes. The proposed formation level is 182.34 and the minimum required is 182.338, so it is 0.002 m above the requirement.","Yes, the proposed FL (182.365) for Bridge No. 555A is above the MIN FL REQ. (182.338).",wrong,"Yes. The proposed formation level is 182.34 and the minimum required is 182.338, so it is 0.002 m above the requirement.",correct,,
+s100_0080,bridge_level_check,images/s100_br557_lsec0.png,Does the proposed formation level at bridge 557 meet the minimum formation level required?,"Yes. The proposed formation level is 180.724 and the minimum required is 180.723, so it is 0.001 m above the requirement.","Yes, the proposed formation level at bridge No. 557 (EXG FL = 180.724) meets the minimum formation level required (MIN FL REQ. = 180.723).",correct,"Yes. The proposed formation level is 180.724 and the minimum required is 180.723, so it is 0.001 m above the requirement.",correct,,
+s100_0102,bridge_level_check,images/s100_br560_lsec0.png,"At bridge 560, is the proposed FL above the MIN FL REQ.? Show the numbers.","Yes. The proposed formation level is 180.724 and the minimum required is 180.406, so it is 0.318 m above the requirement.","Yes, at bridge No. 560, the proposed FL (180.722) is above the MIN FL REQ. (180.406).",wrong,"Yes. The proposed formation level is 180.724 and the minimum required is 180.406, so it is 0.318 m above the requirement.",correct,,
+s100_0119,bridge_level_qa,images/s100_br562_lsec0.png,What is the proposed formation level (FL) at bridge 562?,The proposed formation level (FL) at bridge 562 is 181.162.,The proposed formation level (FL) at bridge No. 562 is 181.122.,partly right (50% of values),The proposed formation level (FL) at bridge 562 is 181.162.,correct,"wrong: 181.122 is the existing FL, not the proposed FL",correct
+s100_0125,bridge_level_qa,images/s100_br563_lsec0.png,What is the existing formation level (EXG FL) at bridge 563?,The existing formation level (EXG FL) at bridge 563 is 180.646.,The existing formation level (EXG FL) at bridge 563 is 180.646.,correct,The existing formation level (EXG FL) at bridge 563 is 180.646.,correct,,
+s100_0081,bridge_level_qa,images/s100_br557_lsec0.png,What is the existing formation level (EXG FL) at bridge 557?,The existing formation level (EXG FL) at bridge 557 is 180.722.,The existing formation level (EXG FL) at bridge No. 557 is 180.722 feet.,correct,The existing formation level (EXG FL) at bridge 557 is 180.722.,correct,,
+s100_0112,bridge_level_qa,images/s100_br561_lsec0.png,What is the bed level (B.L) at bridge 561?,The bed level (B.L) at bridge 561 is 179.904.,The bed level (B.L) at bridge No. 561 is 179.904.,correct,The bed level (B.L) at bridge 561 is 179.904.,correct,,
+s100_0110,bridge_level_qa,images/s100_br561_lsec0.png,What is the minimum formation level required (MIN FL REQ.) at bridge 561?,The minimum formation level required (MIN FL REQ.) at bridge 561 is 180.904.,The minimum formation level required (MIN FL REQ.) at bridge 561 is 180.904 feet.,correct,The minimum formation level required (MIN FL REQ.) at bridge 561 is 180.904.,correct,,
+s100_0104,bridge_level_qa,images/s100_br560_lsec0.png,What is the bed level (B.L) at bridge 560?,The bed level (B.L) at bridge 560 is 179.416.,The bed level (B.L) at bridge No. 560 is 179.416.,correct,The bed level (B.L) at bridge 560 is 179.416.,correct,correct,correct
+s100_0111,bridge_level_qa,images/s100_br561_lsec0.png,What is the proposed formation level (FL) at bridge 561?,The proposed formation level (FL) at bridge 561 is 181.135.,The proposed formation level (FL) at bridge No. 561 is 181.086.,partly right (50% of values),The proposed formation level (FL) at bridge 561 is 181.135.,correct,,
+s100_0083,bridge_level_qa,images/s100_br557_lsec0.png,What is the bed level (B.L) at bridge 557?,The bed level (B.L) at bridge 557 is 179.013.,The bed level (B.L) at bridge No. 557 is 179.013.,correct,The bed level (B.L) at bridge 557 is 179.013.,correct,,
+s100_0149,curve_json,images/s100_curve371_L-se.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""371"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""1° 31' 36\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""126.587m"", ""circular_curve_length"": ""173.162m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""Curve No."": ""371 (RH)"",
+  ""Degree"": ""0.219"",
+  ""Delta"": ""1° 31' 36\"""",
+  ""R"": ""8000.000m"",
+  ""TTL"": ""126.587m"",
+  ""CCL"": ""173.162m"",
+  ""TRL"": ""40.000m"",
+  ""Ca"": ""25 mm"",
+  ""Shift"": ""0.008m"",
+  ""Vmax"": ""160 Kmph""
+}
+```",partly right (83% of values),"```json
+{""curve_no"": ""371"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""1° 31' 36\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""126.587m"", ""circular_curve_length"": ""173.162m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```",correct,"values right, its own field names",correct
+s100_0161,curve_json,images/s100_curve373_plan.png,Extract the horizontal curve parameters shown here as JSON.,"```json
+{""curve_no"": ""373"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.292"", ""deflection_angle"": ""0° 54' 04\"""", ""radius"": ""6000.000m"", ""total_tangent_length"": ""77.190m"", ""circular_curve_length"": ""34.377m"", ""transition_length"": ""60.000m"", ""cant"": ""30 mm"", ""shift"": ""0.025m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""degree"": 0.292,
+  ""delta"": {
+    ""value"": 0,
+    ""angle"": ""54' 04''""
+  },
+  ""radius"": 6000.000,
+  ""tangent_length"": 77.190,
+  ""chord_length"": 34.377,
+  ""transition_length"": 60.000,
+  ""ca"": 30,
+  ""shift"": 0.025,
+  ""max_speed"": 160
+}
+```",partly right (67% of values),"```json
+{""curve_no"": ""373"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.292"", ""deflection_angle"": ""0° 54' 04\"""", ""radius"": ""6000.000m"", ""total_tangent_length"": ""77.190m"", ""circular_curve_length"": ""34.377m"", ""transition_length"": ""60.000m"", ""cant"": ""30 mm"", ""shift"": ""0.025m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0157,curve_json,images/s100_curve371_plan.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""371"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""1° 31' 36\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""126.587m"", ""circular_curve_length"": ""173.162m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""3RD LINE"",
+  ""CURVE No. 371(RH)"",
+  ""Degree = 0.219"",
+  ""Δ = 1° 31' 36\"""",
+  ""R = 8000.000m"",
+  ""TTL = 126.587m"",
+  ""CCL = 173.162m"",
+  ""TRL = 40.000m"",
+  ""Ca = 25 mm"",
+  ""Shift = 0.008m"",
+  ""Vmax = 160 Kmph""
+}
+```",partly right (75% of values),"```json
+{""curve_no"": ""371"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""1° 31' 36\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""126.587m"", ""circular_curve_length"": ""173.162m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0163,curve_json,images/s100_curve374_plan.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""374"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""0° 49' 41\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""77.816m"", ""circular_curve_length"": ""75.630m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""Curve No"": 374,
+  ""Type"": ""RH"",
+  ""Degree"": 0.219,
+  ""Delta"": {
+    ""Degrees"": 0,
+    ""Minutes"": 49,
+    ""Seconds"": 41
+  },
+  ""Radius"": 8000.000,
+  ""Tangent Length"": 77.816,
+  ""Chord Length"": 75.630,
+  ""Tangent Length"": 40.000,
+  ""Ca"": 25,
+  ""Shift"": 0.008,
+  ""Vmax"": 160
+}
+```",partly right (75% of values),"```json
+{""curve_no"": ""374"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""0° 49' 41\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""77.816m"", ""circular_curve_length"": ""75.630m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0159,curve_json,images/s100_curve372_plan.png,Extract the horizontal curve parameters shown here as JSON.,"```json
+{""curve_no"": ""372"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.350"", ""deflection_angle"": ""1° 31' 13\"""", ""radius"": ""5000.000m"", ""total_tangent_length"": ""101.339m"", ""circular_curve_length"": ""62.670m"", ""transition_length"": ""70.000m"", ""cant"": ""40 mm"", ""shift"": ""0.041m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""degree"": 0.35,
+  ""angle"": 1.5847,
+  ""radius"": 5000,
+  ""total_length"": 101.339,
+  ""central_curve_length"": 62.67,
+  ""transition_length"": 70,
+  ""ca"": 40,
+  ""shift"": 0.041,
+  ""max_speed"": 160
+}
+```",partly right (67% of values),"```json
+{""curve_no"": ""372"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.350"", ""deflection_angle"": ""1° 31' 13\"""", ""radius"": ""5000.000m"", ""total_tangent_length"": ""101.339m"", ""circular_curve_length"": ""62.670m"", ""transition_length"": ""70.000m"", ""cant"": ""40 mm"", ""shift"": ""0.041m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0153,curve_json,images/s100_curve373_L-se.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""373"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.292"", ""deflection_angle"": ""0° 54' 04\"""", ""radius"": ""6000.000m"", ""total_tangent_length"": ""77.190m"", ""circular_curve_length"": ""34.377m"", ""transition_length"": ""60.000m"", ""cant"": ""30 mm"", ""shift"": ""0.025m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""CURVE No."": 373,
+  ""Degree"": 0.292,
+  ""Δ"": {
+    ""0°"": 54' 04""
+  },
+  ""R"": 6000.000m,
+  ""TTL"": 77.190m,
+  ""CCL"": 34.377m,
+  ""TRL"": 60.000m,
+  ""Ca"": 30 mm,
+  ""Shift"": 0.025m,
+  ""Vmax"": 160 Kmph
+}
+```",partly right (75% of values),"```json
+{""curve_no"": ""373"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.292"", ""deflection_angle"": ""0° 54' 04\"""", ""radius"": ""6000.000m"", ""total_tangent_length"": ""77.190m"", ""circular_curve_length"": ""34.377m"", ""transition_length"": ""60.000m"", ""cant"": ""30 mm"", ""shift"": ""0.025m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0151,curve_json,images/s100_curve372_L-se.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""372"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.350"", ""deflection_angle"": ""1° 31' 13\"""", ""radius"": ""5000.000m"", ""total_tangent_length"": ""101.339m"", ""circular_curve_length"": ""62.670m"", ""transition_length"": ""70.000m"", ""cant"": ""40 mm"", ""shift"": ""0.041m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""Curve No."": ""372 (LH)"",
+  ""Degree"": ""0.350"",
+  ""Delta"": ""1° 31' 13\"""",
+  ""R"": ""5000.000m"",
+  ""TTL"": ""101.339m"",
+  ""CCL"": ""62.670m"",
+  ""TRL"": ""70.000m"",
+  ""Ca"": ""40 mm"",
+  ""Shift"": ""0.041m"",
+  ""Vmax"": ""160 Kmph""
+}
+```",partly right (83% of values),"```json
+{""curve_no"": ""372"", ""line"": ""proposed 3rd line"", ""hand"": ""left hand"", ""degree"": ""0.350"", ""deflection_angle"": ""1° 31' 13\"""", ""radius"": ""5000.000m"", ""total_tangent_length"": ""101.339m"", ""circular_curve_length"": ""62.670m"", ""transition_length"": ""70.000m"", ""cant"": ""40 mm"", ""shift"": ""0.041m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0155,curve_json,images/s100_curve374_L-se.png,Read the curve data box in this crop and return it as JSON.,"```json
+{""curve_no"": ""374"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""0° 49' 41\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""77.816m"", ""circular_curve_length"": ""75.630m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```","```json
+{
+  ""Curve No."": ""374(RH)"",
+  ""Degree"": ""0.219"",
+  ""Delta"": ""0° 49' 41\"""",
+  ""R"": ""8000.000m"",
+  ""TTL"": ""77.816m"",
+  ""CCL"": ""75.630m"",
+  ""TRL"": ""40.000m"",
+  ""Ca"": ""25 mm"",
+  ""Shift"": ""0.008m"",
+  ""Vmax"": ""160 Knmph""
+}
+```",partly right (83% of values),"```json
+{""curve_no"": ""374"", ""line"": ""proposed 3rd line"", ""hand"": ""right hand"", ""degree"": ""0.219"", ""deflection_angle"": ""0° 49' 41\"""", ""radius"": ""8000.000m"", ""total_tangent_length"": ""77.816m"", ""circular_curve_length"": ""75.630m"", ""transition_length"": ""40.000m"", ""cant"": ""25 mm"", ""shift"": ""0.008m"", ""max_speed"": ""160 Kmph""}
+```",correct,,
+s100_0164,curve_qa,images/s100_curve374_plan.png,What is the cant (Ca) of curve no. 374?,The cant (Ca) of curve no. 374 is 25 mm.,The cant (Ca) of curve no. 374 is 25 mm.,correct,The cant (Ca) of curve no. 374 is 25 mm.,correct,correct,correct
+s100_0162,curve_qa,images/s100_curve373_plan.png,What is the deflection angle (Δ) of curve no. 373?,"The deflection angle (Δ) of curve no. 373 is 0° 54' 04"".","The deflection angle (Δ) of curve no. 373 is 0° 54' 04"".",correct,"The deflection angle (Δ) of curve no. 373 is 0° 54' 04"".",correct,,
+s100_0154,curve_qa,images/s100_curve373_L-se.png,What is the cant (Ca) of curve no. 373?,The cant (Ca) of curve no. 373 is 30 mm.,The cant (Ca) of Curve No. 373 is 30 mm.,correct,The cant (Ca) of curve no. 373 is 30 mm.,correct,,
+s100_0152,curve_qa,images/s100_curve372_L-se.png,What is the transition length (TRL) of curve no. 372?,The transition length (TRL) of curve no. 372 is 70.000m.,The transition length (TRL) of Curve No. 372 is 70.000 meters.,correct,The transition length (TRL) of curve no. 372 is 70.000m.,correct,,
+s100_0160,curve_qa,images/s100_curve372_plan.png,What is the cant (Ca) of curve no. 372?,The cant (Ca) of curve no. 372 is 40 mm.,The cant (Ca) of curve no. 372 is 40 mm.,correct,The cant (Ca) of curve no. 372 is 40 mm.,correct,,
+s100_0156,curve_qa,images/s100_curve374_L-se.png,What is the shift of curve no. 374?,The shift of curve no. 374 is 0.008m.,The shift of Curve No. 374 is 0.008 meters (m).,correct,The shift of curve no. 374 is 0.008m.,correct,,
+s100_0150,curve_qa,images/s100_curve371_L-se.png,What is the cant (Ca) of curve no. 371?,The cant (Ca) of curve no. 371 is 25 mm.,The cant (Ca) of Curve No. 371 is 25 mm.,correct,The cant (Ca) of curve no. 371 is 25 mm.,correct,,
+s100_0158,curve_qa,images/s100_curve371_plan.png,What is the deflection angle (Δ) of curve no. 371?,"The deflection angle (Δ) of curve no. 371 is 1° 31' 36"".","The deflection angle (Δ) of curve no. 371 is 1° 31' 36"".",correct,"The deflection angle (Δ) of curve no. 371 is 1° 31' 36"".",correct,,
+s100_0171,notes_qa,images/s100_notes.png,What is the maximum sectional speed the section is designed for?,Note 10: The section is designed for maximum sectional speed of 160 kmph.,The section is designed for a maximum sectional speed of 160 KMPH (kilometers per hour).,partly right (50% of values),Note 10: The section is designed for maximum sectional speed of 160 kmph.,correct,correct,correct
+s100_0169,notes_qa,images/s100_notes.png,From where are the chainages and kilometres reckoned?,Note 9: The chainage and kilometers shown are reckoned from center line of station building as 0.00,The chainages and kilometers shown in the section are reckoned from the center line of the station building as 0.00.,correct,Note 9: The chainage and kilometers shown are reckoned from center line of station building as 0.00,correct,,
+s100_0170,notes_qa,images/s100_notes.png,How is existing work shown on this drawing?,Note 2: Existing work shown in black.,Existing work is shown in black on the drawing.,partly right (75% of values),Existing work is shown in black.,partly right (75% of values),,
+s100_0175,sheet_layout,images/s100_sheet.png,"What kind of drawing is this, and where are its main parts? Give the parts as JSON boxes.","This is a railway Detailed Plan and L-Section sheet: the alignment plan of the proposed 3rd line is on top, the longitudinal section (profile and data bands) below it, and notes, TBM table, legend, abbreviations and the title block in the right-hand panel.
+```json
+[
+  {""bbox_2d"": [17, 20, 1175, 399], ""label"": ""alignment plan""},
+  {""bbox_2d"": [57, 399, 1175, 594], ""label"": ""L-section (longitudinal profile)""},
+  {""bbox_2d"": [57, 594, 1175, 854], ""label"": ""L-section data bands (levels, gradients, chainages)""},
+  {""bbox_2d"": [1179, 20, 1389, 172], ""label"": ""general notes""},
+  {""bbox_2d"": [1179, 182, 1389, 324], ""label"": ""TBM (temporary bench mark) details table""},
+  {""bbox_2d"": [1179, 324, 1389, 419], ""label"": ""legend""},
+  {""bbox_2d"": [1179, 419, 1389, 507], ""label"": ""abbreviations""},
+  {""bbox_2d"": [1179, 507, 1389, 648], ""label"": ""reference drawings and signatures""},
+  {""bbox_2d"": [1179, 648, 1389, 694], ""label"": ""issue record""},
+  {""bbox_2d"": [1179, 694, 1389, 867], ""label"": ""title block""},
+  {""bbox_2d"": [33, 36, 97, 55], ""label"": ""gauge / survey info box""}
+]
+```","This is a detailed engineering drawing for railway construction, specifically a profile plan. The main parts of the drawing include:
+
+1. **Title Block**: Contains information about the project, such as the client, consultant, and date.
+2. **Legend**: Describes various symbols and abbreviations used in the drawing.
+3. **Scale**: Indicates the scale of the drawing (1:500).
+4. **Section Details**: Includes measurements and specifications for different sections of the railway line.
+5. **Profile Plan**: Shows the cross-sectional view of the railway track, including the alignment, grades, and other relevant details.
+6. **Elevation Plan**: Provides an overhead view of the railway track, showing the alignment and elevation changes.
+7. **Sections**: Detailed views of specific sections of the railway line, including cross-sections and elevations.
+8. **Notes and Annotations**: Provide additional information and instructions for construction.
+
+Here is the JSON representation of these parts:
+
+```json
+{
+  ""title_block"": {
+    ""client"": ""WEST CENTRAL RAILWAY"",
+    ""consultant"": ""Aarvee Engineering Consultants Limited"",
+    ""date"": ""17-07-2022""
+  },
+  ""legend"": {
+    ""symbol_description"": [
+      {""symbol"": ""P1"", ""description"": ""Point of Vertical Intersection""},
+      {""symbol"": ""TTP"", ""description"": ""Tangent to Transition Point""},
+      {""symbol"": ""CFP"", ""description"": ""Curve Tangent Point""},
+      {""symbol"": ""FL"", ""description"": ""Formation Level""},
+      {""symbol"": ""CL"", ""description"": ""Straight Line Level""},
+      {""symbol"": ""DTC"", ""description"": ""Degree of Curvature""},
+      {""symbol"": ""DIL"", ""description"": ""Distance of Curved Section""},
+      {""symbol"": ""DIL"", ""description"": ""Distance of Curved Section""},
+      {""symbol"": ""DIL"", ""description"": ""Distance of Curved Section""}
+    ]
+  },
+  ""scale"": ""1:500"",
+  ""sections"": [
+    {
+      ""section_number"": ""1"",
+      ""description"": ""SECTION 149M - 150M"",
+      ""details"": [
+        ""Alignment"",
+        ""Grades"",
+        ""Elevations""
+      ]
+    },
+    {
+      ""section_number"": ""2"",
+      ""description"": ""SECTION 150M - 151M"",
+      ""details"": [
+        ""Alignment"",
+        ""Grades"",
+        ""Elevations""
+      ]
+    }
+  ],
+  ""notes_and_annotations"": [
+    ""All dimensions are in meters, unless otherwise specified."",
+    ""Existing work shown in black."",
+    ""Total length of the section is 1.5 km."",
+    ""As per turnouts reference yard, grade is maintained at 150 (compensated)."",
+    ""As per turnouts reference yard, grade is maintained at 150 (compensated)."",
+    ""As per turnouts reference yard, grade is maintained at 150 (compensated)."",
+    ""As per turnouts reference yard, grade is maintained at 150 (compensated)."",
+    ""As per turnouts reference yard, grade is maintained at 150 (compensated)."",
+    ""As per turnouts",wrong box,"This is a railway Detailed Plan and L-Section sheet: the alignment plan of the proposed 3rd line is on top, the longitudinal section (profile and data bands) below it, and notes, TBM table, legend, abbreviations and the title block in the right-hand panel.
+```json
+[
+  {""bbox_2d"": [15, 14, 1176, 380], ""label"": ""alignment plan""},
+  {""bbox_2d"": [15, 390, 1176, 644], ""label"": ""L-section (longitudinal profile)""},
+  {""bbox_2d"": [15, 644, 1176, 864], ""label"": ""L-section data bands (levels, gradients, chainages)""},
+  {""bbox_2d"": [1181, 14, 1389, 173], ""label"": ""general notes""},
+  {""bbox_2d"": [1181, 192, 1389, 312], ""label"": ""TBM (temporary bench mark) details table""},
+  {""bbox_2d"": [1181, 312, 1389, 421], ""label"": ""legend""},
+  {""bbox_2d"": [1181, 421, 1389, 530], ""label"": ""abbreviations""},
+  {""bbox_2d"": [1181, 530, 1389, 644], ""label"": ""drawing control and signature block""},
+  {""bbox_2d"": [1181, 644, 1389, 864], ""label"": ""issue record""}
+]
+```",correct box,,
+s100_0167,tbm_json,images/s100_tbm.png,"Extract the temporary bench marks (ID, chainage, easting, northing, MSL, description) from this table as JSON.","```json
+[
+  {""tbm_id"": ""BM39"", ""chainage_m"": 1240310.984, ""easting"": 739613.243, ""northing"": 3007062.984, ""msl_m"": 225.688, ""description"": ""Railway EP Bottam Near Railway Track""},
+  {""tbm_id"": ""BM38"", ""chainage_m"": 1241039.759, ""easting"": 739926.56, ""northing"": 3007721.558, ""msl_m"": 224.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM37"", ""chainage_m"": 1242487.095, ""easting"": 740581.469, ""northing"": 3009011.574, ""msl_m"": 223.688, ""description"": ""Railway EP Bottam Near Agra Road Bridge.""},
+  {""tbm_id"": ""BM36"", ""chainage_m"": 1243048.268, ""easting"": 740837.486, ""northing"": 3009511.094, ""msl_m"": 222.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM35"", ""chainage_m"": 1244275.677, ""easting"": 741391.796, ""northing"": 3010606.208, ""msl_m"": 221.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM34"", ""chainage_m"": 1244862.511, ""easting"": 741663.397, ""northing"": 3011126.454, ""msl_m"": 220.688, ""description"": ""Marked on the Small EP Line Box Near EP Pole.""}
+]
+```","```json
+{
+  ""TBM DETAILS"": [
+    {
+      ""TBM ID"": ""BM39"",
+      ""Chainage"": ""1240310.984"",
+      ""Easting"": ""739613.243"",
+      ""Northing"": ""3007062.984"",
+      ""MSL"": ""225.688"",
+      ""Description"": ""Marked on the Railway EP Bottom Near Railway Track RL.""
+    },
+    {
+      ""TBM ID"": ""BM38"",
+      ""Chainage"": ""1241039.759"",
+      ""Easting"": ""739926.56"",
+      ""Northing"": ""3007721.558"",
+      ""MSL"": ""224.688"",
+      ""Description"": ""Marked on the Railway EP Bottom Near Railway Track.""
+    },
+    {
+      ""TBM ID"": ""BM37"",
+      ""Chainage"": ""1242487.095"",
+      ""Easting"": ""740581.469"",
+      ""Northing"": ""3009011.574"",
+      ""MSL"": ""223.688"",
+      ""Description"": ""Marked on the Railway EP Bottom Near Agra Road Bridge.""
+    },
+    {
+      ""TBM ID"": ""BM36"",
+      ""Chainage"": ""1243048.268"",
+      ""Easting"": ""740837.486"",
+      ""Northing"": ""3009511.094"",
+      ""MSL"": ""222.688"",
+      ""Description"": ""Marked on the Railway EP Bottom Near Railway Track.""
+    },
+    {
+      ""TBM ID"": ""BM35"",
+      ""Chainage"": ""1244275.677"",
+      ""Easting"": ""741391.796"",
+      ""Northing"": ""3010606.208"",
+      ""MSL"": ""221.688"",
+      ""Description"": ""Marked on the Railway EP Bottom Near Railway Track.""
+    },
+    {
+      ""TBM ID"": ""BM34"",
+      ""Chainage"": ""1244862.511"",
+      ""Easting"": ""741663.397"",
+      ""Northing"": ""301126.454"",
+      ""MSL"": ""220.688"",
+      ""Description"": ""Marked on the Small EP Line Box Near EP Pole.""
+    }
+  ]
+}
+```",partly right (88% of values),"```json
+[
+  {""tbm_id"": ""BM39"", ""chainage_m"": 1240310.984, ""easting"": 739613.243, ""northing"": 3007062.984, ""msl_m"": 225.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track RL.""},
+  {""tbm_id"": ""BM38"", ""chainage_m"": 1241039.759, ""easting"": 739926.56, ""northing"": 3007721.558, ""msl_m"": 224.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM37"", ""chainage_m"": 1242487.095, ""easting"": 740581.469, ""northing"": 3009011.574, ""msl_m"": 223.688, ""description"": ""Marked on the Railway EP Bottam Near Agra Road Bridge.""},
+  {""tbm_id"": ""BM36"", ""chainage_m"": 1243048.268, ""easting"": 740837.486, ""northing"": 3009511.094, ""msl_m"": 222.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM35"", ""chainage_m"": 1244275.677, ""easting"": 741391.796, ""northing"": 3010606.208, ""msl_m"": 221.688, ""description"": ""Marked on the Railway EP Bottam Near Railway Track.""},
+  {""tbm_id"": ""BM34"", ""chainage_m"": 1244862.511, ""easting"": 741663.397, ""northing"": 3011126.454, ""msl_m"": 220.688, ""description"": ""Marked on the Small EP Line Box Near EP Pole.""}
+]
+```","values present, not in the requested fields",,
+s100_0168,tbm_qa,images/s100_tbm.png,What is the MSL value of BM36?,"BM36 is at MSL 222.688 m, chainage 1243048.268 m.",The MSL (Mean Sea Level) value for BM36 is 222.688.,partly right (67% of values),"BM36 is at MSL 222.688 m, chainage 1243048.268 m.",correct,correct,correct
+s100_0005,tile_region,images/s100_tile_r0c3.png,Which part of the drawing sheet is this crop taken from?,This crop is from the alignment plan of the sheet.,"The crop taken from the drawing sheet appears to be related to civil engineering, specifically for railway or road construction. The text and symbols indicate details about a curve on a railway line, including the curve number, degree, radius, total length, chord length, tangent length, and other relevant parameters. The notation ""3RD LINE"" suggests it is part of a multi-line project, likely involving multiple railway lines.
+
+Here are some key points from the text:
+
+- **Curve No. 373 (LH)**: This indicates the specific curve being discussed.
+- **Degree = 0.292**: This is the angle",wrong,This crop is from the alignment plan of the sheet.,correct,describes the crop but does not name the part of the sheet,correct
+s100_0021,tile_region,images/s100_tile_r1c3.png,This is a crop of a railway Plan & L-Section sheet. Which section of the sheet does it show?,This crop is from the alignment plan of the sheet.,"The image you provided appears to be a cropped section of a railway plan and longitudinal section (L-section) sheet. This type of sheet typically shows the cross-sectional view of a railway line, including details such as track geometry, alignment, and various features along the route.
+
+Here are some key elements that indicate this is an L-section:
+
+1. **Track Geometry**: The lines and curves shown represent the track profile.
+2. **Alignment Details**: The numbers and letters (e.g., CH: 1241+977.000, FL: 180.724) likely refer to the",correct,This crop is from the alignment plan of the sheet.,correct,,
+s100_0030,tile_region,images/s100_tile_r3c4.png,This is a crop of a railway Plan & L-Section sheet. Which section of the sheet does it show?,This crop is from the L-section (longitudinal profile) of the sheet.,"The image you provided is a section of a railway plan and longitudinal section (L-section) sheet. This type of sheet is used to represent the cross-sectional profile of a railway track, including details such as the alignment, grade, and structural elements like bridges, tunnels, and embankments.
+
+Here’s what the section shows:
+
+1. **Alignment**: The horizontal lines represent the alignment of the railway track.
+2. **Grade**: The vertical lines indicate the gradient or slope of the track.
+3. **Structural Elements**: The text labels indicate different sections of the track:
+   - **C/L OF EXG. BR. NO",correct,This crop is from the L-section (longitudinal profile) of the sheet.,correct,,
+s100_0028,tile_region,images/s100_tile_r3c3.png,Which part of the drawing sheet is this crop taken from?,This crop is from the L-section (longitudinal profile) of the sheet.,"This crop appears to be taken from an engineering or surveying drawing, specifically a profile view of a sewer station building. The notation ""CL OF SEWAR STATION BUILDING"" indicates that this section is related to the sewer station building's contour lines (CL). The coordinates and measurements provided suggest it is part of a detailed survey or design plan for the sewer station.",partly right (67% of values),This crop is from the L-section (longitudinal profile) of the sheet.,correct,,
+s100_0007,tile_region,images/s100_tile_r0c4.png,Which part of the drawing sheet is this crop taken from?,This crop is from the alignment plan of the sheet.,"This crop appears to be taken from a civil engineering or construction drawing sheet, specifically related to road or highway design. The text and symbols indicate various sections of a road or highway, including:
+
+- **C/L OF EXG. BR. NO. 557 RCC SLAB - 1 X 246 - DRAIN**
+- **PRO TO BE EXTENDED AS 1 X 2 X 2 - RCC BOX (MINOR) AT CH: 1242323.998**
+- **C/L OF EXG. BR. NO. 558 ARCH - 1",wrong,This crop is from the alignment plan of the sheet.,correct,,
+s100_0019,tile_region,images/s100_tile_r1c1.png,This is a crop of a railway Plan & L-Section sheet. Which section of the sheet does it show?,This crop is from the alignment plan of the sheet.,"The image you provided appears to be a cropped section of a railway plan and line section sheet. The text on the image indicates that it shows part of the 3rd line, specifically Curve No. 371 (RH). This suggests that the section of the sheet is focused on the geometry and alignment of the third railway line, particularly highlighting Curve No. 371 which is located on the right-hand side (RH) of the track. 
+
+Here's a breakdown of what the text in the image means:
+- **ST AT CH**: This likely stands for Station at Chainage.
+- **TC AT CH**: This",correct,This crop is from the alignment plan of the sheet.,correct,,
+s100_0032,tile_region,images/s100_tile_r3c5.png,This is a crop of a railway Plan & L-Section sheet. Which section of the sheet does it show?,This crop is from the L-section (longitudinal profile) of the sheet.,"The image you provided is a cropped section of a railway plan and longitudinal section (L-section) sheet. This type of sheet is used to represent the cross-sectional view of a railway track, including details such as the alignment, grade, and structural elements like bridges, tunnels, and embankments.
+
+Here's what the cropped section shows:
+
+1. **Alignment Details**: The section includes the alignment of the railway track, showing the centerline (C/L) of various structures such as arches, boxes, and drains.
+2. **Structural Elements**: Specific structural components like arches (ARCH), boxes (RCC BOX), and",partly right (67% of values),This crop is from the alignment plan of the sheet.,wrong,no clear answer,"wrong: said alignment plan, it is the L-section"
+s100_0045,tile_region,images/s100_tile_r4c7.png,Which part of the drawing sheet is this crop taken from?,"This crop is from the L-section data bands (levels, gradients, chainages) of the sheet.","The image provided appears to be a cropped section of a technical drawing or graph, likely related to engineering or scientific data. The presence of measurements, annotations, and specific sections marked with red lines suggests that it is part of a larger document.
+
+To determine which part of the drawing sheet this crop is taken from, we would need more context such as:
+
+1. **Document Title or Header**: Look for any visible text at the top or bottom of the document.
+2. **Annotations**: Check if there are any annotations or titles that might indicate the purpose or origin of the document.
+3. **Other Sections**: If possible, view other parts",wrong,"This crop is from the L-section data bands (levels, gradients, chainages) of the sheet.",correct,,
+s100_0018,tile_structures,images/s100_tile_r1c0.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [430, 195, 678, 476], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,wrong: invented a bridge,correct
+s100_0042,tile_structures,images/s100_tile_r4c1.png,"Detect every bridge or structure callout in this crop of a railway Plan & L-Section drawing. Output a JSON list of {""bbox_2d"": [x1, y1, x2, y2], ""label"": ...}.",There are no bridge or structure callouts in this crop.,There are none.,correct,There are no bridge or structure callouts in this crop.,correct,,
+s100_0023,tile_structures,images/s100_tile_r1c8.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [430, 156, 578, 219], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0054,tile_structures,images/s100_tile_r5c7.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [1, 0, 978, 978], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0056,tile_structures,images/s100_tile_r5c8.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [10, 3, 947, 865], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0044,tile_structures,images/s100_tile_r4c6.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [785, 104, 936, 128], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0050,tile_structures,images/s100_tile_r5c2.png,Locate the bridge / culvert / ROB labels in this image. Return JSON with bbox_2d and label for each.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [0, 0, 951, 846], ""label"": ""bridge / culvert / ROB""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0020,tile_structures,images/s100_tile_r1c1.png,Find all bridge callouts visible in this drawing crop and give their bounding boxes as JSON.,There are no bridge or structure callouts in this crop.,"```json
+[
+	{""bbox_2d"": [0, 184, 979, 356], ""label"": ""bridge""}
+]
+```",invented a bridge,There are no bridge or structure callouts in this crop.,correct,,
+s100_0165,title_json,images/s100_title.png,Read the title block and return the sheet metadata as JSON.,"```json
+{""drawing_no"": ""AA/WCR/FLS/2616/MKN-3RD/P&P/100"", ""sheet_no"": ""100"", ""title"": ""DETAILED PLAN AND L SECTION MATHURA-NAGDA -3RD LINE"", ""chainage_from"": ""1240+000.000"", ""chainage_to"": ""1245+000.000"", ""scale"": ""HOR : 1:5000 , VER : 1:500"", ""date"": ""01-07-2025"", ""client"": ""WEST CENTRAL RAILWAY, KOTA DIVISION"", ""issue_record"": [{""no"": ""1"", ""date"": ""01-07-2025"", ""rev"": ""R0"", ""prepared_by"": ""SIVA THUTA"", ""checked_by"": ""RAMMOHAN"", ""approved_by"": ""RAMAKRISHNA""}]}
+```","```json
+{
+  ""title"": ""DETAILED PLAN AND L SECTION MATHURA-NAGDA-3RD LINE"",
+  ""section"": ""MATHURA-NAGDA"",
+  ""line_number"": ""3RD"",
+  ""project_number"": ""2616"",
+  ""sheet_number"": ""100""
+}
+```",wrong,"```json
+{""drawing_no"": ""AA/WCR/FLS/2616/MKN-3RD/P&P/100"", ""sheet_no"": ""100"", ""title"": ""DETAILED PLAN AND L SECTION MATHURA-NAGDA -3RD LINE"", ""chainage_from"": ""1240+000.000"", ""chainage_to"": ""1245+000.000"", ""scale"": ""HOR : 1:5000 , VER : 1:500"", ""date"": ""01-07-2025"", ""client"": ""WEST CENTRAL RAILWAY, KOTA DIVISION"", ""issue_record"": [{""no"": ""1"", ""date"": ""01-07-2025"", ""rev"": ""R0"", ""prepared_by"": ""SIVA THUTA"", ""checked_by"": ""RAMMOHAN"", ""approved_by"": ""RAMAKRISHNA""}]}
+```",correct,,
+s100_0166,title_qa,images/s100_title.png,Which chainage range does this sheet cover?,This sheet covers chainage 1240+000.000 to 1245+000.000.,This sheet covers the chainage range from 1240+000.000 to 1245+000.000.,correct,This sheet covers chainage 1240+000.000 to 1245+000.000.,correct,correct,correct
