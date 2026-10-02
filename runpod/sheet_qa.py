@@ -19,23 +19,29 @@ from sheet_reader import g
 LEVELS = {"existing_formation_level": "existing FL", "min_formation_level_required": "MIN FL REQ.",
           "proposed_formation_level": "FL", "bed_level": "bed level", "high_flood_level": "HFL", "free_board": "free board"}
 BAND = {"ground_level": "ground level", "prop_fl": "proposed FL", "prop_rl": "proposed RL", "cut_fill": "cut(-)/fill(+)",
-        "exg_up_fl": "existing UP FL", "fl_difference": "FL difference", "track_distance": "track distance"}
+        "exg_up_fl": "EXG. UP LINE FL", "fl_difference": "FL difference", "track_distance": "track distance"}
 DATA = {"existing_type": "existing type", "existing_span": "existing span", "crossing": "crossing", "proposal": "proposal",
         "category": "category", "chainage_m": "chainage"}
 
 # (pattern, [(source, key)]), most specific first; a matched phrase is removed before the next pattern is tried,
-# so "min FL" does not also count as "FL".
+# so "min FL" does not also count as "FL". The data-band row labels name other rows inside them
+# ("DIFFERENCE BETWEEN PROP. 3RD LINE FL AND EXG. UP LINE FL", "CUT(-)/FILL(+) (FL - GL)",
+# "TRACK DISTANCE BETWEEN PROP. 3RD LINE & EXG. UP LINE"), so whole labels are matched before single words.
+EXG = r"(?:exg\.?|existing|exist\.?)"
 FIELDS = [
+    (r"(?:fl\s*)?diff(?:erence)?(?:\s*between)?(?:[^?]*?" + EXG + r"\s*up\s*(?:line\s*)?fl\b)?", [("band", "fl_difference")]),
+    (r"track\s*(?:distance|centres?|centers?|spacing)(?:\s*between[^?]*?" + EXG + r"\s*up(?:\s*line)?)?|distance\s*between\s*tracks",
+     [("band", "track_distance")]),
+    (r"\bcut\w*|\bfill\w*|bank\s*height|embankment|\(?\s*\bfl\s*-\s*gl\b\s*\)?", [("band", "cut_fill")]),
     (r"min(?:imum)?\.?\s*(?:fl|formation(?:\s*level)?)(?:\s*req\w*\.?)?", [("lv", "min_formation_level_required")]),
-    (r"(?:existing|exg\.?|exist\.?)\s*(?:up\s*)?(?:fl|formation(?:\s*level)?)", [("lv", "existing_formation_level"), ("band", "exg_up_fl")]),
+    (EXG + r"\s*up\s*(?:line\s*)?(?:fl|formation(?:\s*level)?)\b", [("band", "exg_up_fl")]),     # the band row "EXG. UP LINE FL"
+    (EXG + r"\s*(?:fl|formation(?:\s*level)?)\b", [("lv", "existing_formation_level"), ("band", "exg_up_fl")]),
     (r"free\s*-?board|\bfb\b", [("lv", "free_board")]),
     (r"\bhfl\b|high\s*flood(?:\s*level)?|flood\s*level", [("lv", "high_flood_level")]),
     (r"bed\s*level|\bbl\b", [("lv", "bed_level")]),
     (r"ground(?:\s*level)?|\bgl\b|\bngl\b", [("band", "ground_level")]),
     (r"rail\s*level|\brl\b", [("band", "prop_rl")]),
-    (r"\bcut\b|\bfill(?:ing)?\b|bank\s*height|embankment|cutting", [("band", "cut_fill")]),
-    (r"(?:fl\s*)?diff(?:erence)?", [("band", "fl_difference")]),
-    (r"track\s*(?:distance|centres?|centers?|spacing)|distance\s*between\s*tracks", [("band", "track_distance")]),
+    (r"\bchainage\b|\bwhere\b|\blocation\b", [("d", "chainage_m")]),
     (r"\blevels\b", [("lv", k) for k in LEVELS]),
     (r"formation(?:\s*level)?|\bp?fl\b|\blevel\b", [("lv", "proposed_formation_level"), ("band", "prop_fl")]),
     (r"\bspan\b|existing\s*(?:type|bridge|structure)|\btype\b", [("d", "existing_type"), ("d", "existing_span")]),
