@@ -36,6 +36,9 @@ The same parameter set answers questions about the GAD, so querying and DXF outp
 - **(b) AutoCAD constraints and dynamic blocks inside the file.** No open-source library writes these, so AutoCAD (or BricsCAD) has to build them. We generate an AutoLISP script that inserts dynamic blocks, adds geometric constraints, named dimensional constraints (`clear_span`, `wall`, `top_slab`, ...) and formulas in the Parameters Manager. It is run either by the engineer in their own AutoCAD, or headless on a licensed Windows machine (accoreconsole or BricsCAD).
   - A dynamic block library (box cell, pier, abutment, wing wall, girder, bearing, pile cap, railing) is built once by hand in AutoCAD, preferably by a CAD person who knows the drawing standards.
   - AutoCAD LT cannot author dynamic blocks or constraints, which would limit (b).
+  - Library check (re-verified): ezdxf only preserves dynamic blocks and constraints (they are undocumented in the DXF reference; copying such blocks can drop them); LibreDWG lists the constraint objects as unhandled; ACadSharp has no constraint support. No open-source library can author them.
+  - **Server option without our own AutoCAD licence: Autodesk Platform Services (APS) Design Automation for AutoCAD** — real AutoCAD running headless in Autodesk's cloud, which runs our AutoLISP / scripts / .NET plug-ins and returns the DWG/DXF. Billed per engine time (4 cloud credits per hour for AutoCAD; Autodesk's own example put a ~1-minute AutoCAD job at about $0.07 — re-check current pricing). Drawings are sent to Autodesk's cloud, so confirm that is acceptable for the project data.
+  - Commercial alternative: ODA Drawings SDK (C++, paid membership) supports dynamic blocks and geometric/dimensional constraints; only worth it if we build our own CAD product.
 
 ## Interactive "what if" editing
 
