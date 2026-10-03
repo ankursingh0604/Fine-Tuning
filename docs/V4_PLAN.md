@@ -21,6 +21,32 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
   dataset size). Pods are private and deleted after training; the adapter is downloaded and kept in-house.
 - Open hardware question: which in-house GPU will run it (80 GB for 16-bit, or 48 GB for 8-bit)?
 
+## Frameworks — decided
+
+**Training: Unsloth, 16-bit LoRA (not QLoRA).**
+
+- Not QLoRA: it trains against a 4-bit copy of the model (accuracy loss), Unsloth advises against 4-bit training for
+  Qwen3.5, and the 96 GB GPU makes it unnecessary. v3 also used 16-bit LoRA.
+- Not full fine-tuning: needs several GPUs; LoRA gets close for a narrow domain at a fraction of the cost.
+- Unsloth: supports Qwen3.5 vision fine-tuning, fastest on one GPU, and v3's script, data format and
+  response-only training carry over. LLaMA-Factory / ms-swift only if multi-GPU training is ever needed (122B).
+- LoRA settings, confirmed in the 9B pilot: vision + language layers (as v3); start r = 16, alpha = 16, and also try
+  r = 32 (v4 teaches much more); keep the better on validation. 2-3 epochs, best checkpoint on validation,
+  checkpoints on a RunPod network volume.
+- RunPod GPUs: pilot on A40 ($0.49/hr) or L40S ($1.09/hr); main run on **RTX PRO 6000, 96 GB ($2.09/hr)** — headroom
+  over 80 GB cards, good availability (needs recent PyTorch cu128 builds, as already used). Top up the balance
+  before the main run.
+
+| Part | Tool |
+|---|---|
+| Fine-tuning | Unsloth (on Hugging Face TRL + PEFT); `transformers` v5 (required by Qwen3.5) |
+| Serving in-house | vLLM: base + LoRA adapter, or merged into one 16-bit model; 8-bit (FP8) only on a 48 GB GPU |
+| Agent loop and tools | Own small loop using Qwen3.5's built-in tool-calling format (no LangChain etc.) |
+| Store | SQLite + local text-search index (reference library, sheet text) |
+| OCR cross-check | RapidOCR (PP-OCRv4), CPU |
+| Exact PDF reading | PyMuPDF (`annotate.py`) |
+| Evaluation | Own test-set scripts, as for v3 |
+
 ## Accuracy mode (time traded for correctness)
 
 Accuracy comes mainly from **reading each value more than once and checking it**, not from longer thinking on
