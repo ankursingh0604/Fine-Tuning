@@ -73,6 +73,43 @@ For vector PDFs the same store is filled exactly from `annotate.py` (no model ne
 **Test set:** includes long-tail questions (notes, legend items, small labels, remarks) scored separately from the
 structured items, so coverage is measured, not assumed.
 
+## Multi-sheet PDFs
+
+Real uploads are whole PDFs (e.g. `MKN_PNP_1210-1251_3rd Line.pdf`: 9 pages, sheets 94-102, each continuing the
+previous sheet's chainage). Today `read_sheet.py` and the app take one image of one sheet; `annotate.py` (used by
+the on-hold PDF checker) already reads every page of a vector PDF exactly.
+
+1. **Split and recognise each page** (situation awareness): L-section sheet / cover or index / GAD / other. Other
+   pages are reported, never forced into L-section fields. Each L-section page gets its layout verdict.
+2. **Route per page:** vector page (selectable text; all 17 pages of the current PDFs) -> `annotate.py`, exact,
+   seconds, no model. Scanned page -> render at 150-200 dpi -> whole-sheet reader + model. Mixed PDFs are handled page
+   by page.
+3. **One store**, each sheet filed by sheet number and chainage range from its title block.
+4. **Checks across sheets:**
+   - continuity: each sheet's end chainage = the next sheet's start; previous/next sheet numbers in the title blocks
+     agree; gaps, overlaps and missing sheets reported;
+   - bridges on a sheet boundary (drawn on both sheets) merged into one, keeping the complete callout
+     (`belongs_to` / `complete` from the annotator);
+   - values that should match across a boundary (e.g. last band column of one sheet vs first of the next) checked.
+5. **Questions across the whole PDF**, every answer citing its sheet: "which sheet covers CH 1242662.9?", "all
+   bridges below MIN FL in this PDF", "highest fill between 1215+000 and 1240+000" across several sheets.
+6. **Time and progress:** vector PDF, all sheets in seconds; scanned, about 1-2 minutes per sheet with vLLM (about
+   10-20 minutes for 9 sheets). Progress page by page; each sheet can be questioned as soon as it is done.
+
+**Versions — decided: a sheet number already in the store is kept as a separate version, never replaced.**
+
+- A version is identified by sheet number + revision from the issue record (R0, R1, ...) + upload (file name, date,
+  content hash).
+- The **identical file uploaded again** (same content hash) reuses the stored reading; it is not a new version.
+- Answers use the **latest revision** by default (by issue-record revision; if revisions are equal or missing, the
+  latest upload) and say which version they used.
+- If another stored version of that sheet **differs** on the value asked about, the answer says so
+  (e.g. "sheet 100 R1: FL 180.724; R0 had 180.700").
+- Users can ask for a specific version ("sheet 100 R0"), list versions ("which versions of sheet 100 do we have?")
+  and compare them ("what changed between R0 and R1 of sheet 100?" -> differences in bridges, levels, band values,
+  curves, notes).
+- Nothing is deleted or overwritten by an upload.
+
 ## Situation awareness
 
 The model must recognise **what it has been given and what is being asked**, and choose its behaviour —
@@ -153,7 +190,9 @@ read, not from model reasoning.
 ## Phases
 
 0. **Data and decisions**: new L-section PDFs (text layer, layout, annotation); held-back test sheets; hardware answers.
-1. **Store and tools** (code only): SQLite store of everything on every sheet; the six tools; tested on vector PDFs.
+1. **Store and tools** (code only): SQLite store of everything on every sheet, with sheet versions (see "Multi-sheet
+   PDFs"); multi-page PDF intake (page split, page type, vector/scanned routing, cross-sheet checks); the six tools;
+   tested on vector PDFs.
 2. **Whole-sheet reader, everything on the sheet** (see "Full coverage"): layer 1 full sweep (all band columns, curves,
    transition points, gradients, grade points, km posts, notes, legend, abbreviations, panel sections) and layer 2
    long tail (whole-sheet text index + `look`). Connect the vector-PDF route (`annotate.py`) to the same store.
