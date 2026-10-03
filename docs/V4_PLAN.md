@@ -9,16 +9,16 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
 - **Main model: Qwen3.5-27B (dense).** All 27B parameters work on every token, so it is stronger at reading small
   digits and at reasoning than the 35B-A3B mixture-of-experts model (which uses only ~3B parameters per token and was
   the choice when speed mattered). Unsloth supports Qwen3.5 vision fine-tuning; the 27B scores 89.4 on OCRBench.
-- **Pilot first: Qwen3.5-9B** to prove the data and pipeline cheaply before the main run.
+- **No 9B pilot (decided: budget).** The risks a pilot would catch are caught instead by free CPU checks and a smoke
+  test at the start of the main run (see "One training run").
 - **Step up only if the 27B falls short on the test set:** Qwen3.5-122B-A10B (larger mixture of experts, ~10B active
   per token). Much heavier to train and run (several GPUs), so only with evidence that it is needed.
 - Training: 16-bit LoRA (Unsloth advises against 4-bit QLoRA training for Qwen3.5), 2-3 epochs, not more; best
   checkpoint on validation. 27B 16-bit LoRA needs about 56 GB plus our image crops: **one 80 GB GPU (A100/H100)**.
 - Running it: **16-bit (about 54 GB) on an 80 GB GPU, or 8-bit (about 28-30 GB) on a 48 GB GPU** — not 4-bit, which
   costs accuracy. The RTX 3060 (12 GB) cannot run it.
-- **Training on RunPod — decided, acceptable.** Pilot (9B) on a 48 GB GPU (L40S / A6000), roughly $10-30. Main run
-  (27B) on one 80 GB GPU (A100 / H100), roughly 1.5-3 days and $100-250 for 2-3 epochs (estimate; depends on the final
-  dataset size). Pods are private and deleted after training; the adapter is downloaded and kept in-house.
+- **Training on RunPod — decided, acceptable.** One main run (27B) on one 96 GB RTX PRO 6000, roughly 1.5-3 days and
+  $100-250 for up to 3 epochs (estimate; depends on the final dataset size); usually less with early stopping. Pods are private and deleted after training; the adapter is downloaded and kept in-house.
 - Open hardware question: which in-house GPU will run it (80 GB for 16-bit, or 48 GB for 8-bit)?
 
 ## Frameworks — decided
@@ -30,10 +30,11 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
 - Not full fine-tuning: needs several GPUs; LoRA gets close for a narrow domain at a fraction of the cost.
 - Unsloth: supports Qwen3.5 vision fine-tuning, fastest on one GPU, and v3's script, data format and
   response-only training carry over. LLaMA-Factory / ms-swift only if multi-GPU training is ever needed (122B).
-- LoRA settings, confirmed in the 9B pilot: vision + language layers (as v3); start r = 16, alpha = 16, and also try
-  r = 32 (v4 teaches much more); keep the better on validation. 2-3 epochs, best checkpoint on validation,
-  checkpoints on a RunPod network volume.
-- RunPod GPUs: pilot on A40 ($0.49/hr) or L40S ($1.09/hr); main run on **RTX PRO 6000, 96 GB ($2.09/hr)** — headroom
+- LoRA settings (no pilot to compare, so one choice): vision + language layers (as v3); **r = 32, alpha = 32** — v4
+  teaches much more than v3 (tools, situations, generic tables), the extra memory is small, and checkpoint selection
+  on validation guards against overfitting. Up to 3 epochs, best checkpoint on validation, checkpoints on a RunPod
+  network volume.
+- RunPod GPU: **RTX PRO 6000, 96 GB ($2.09/hr)** — headroom
   over 80 GB cards, good availability (needs recent PyTorch cu128 builds, as already used). Top up the balance
   before the main run.
 
@@ -46,6 +47,26 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
 | OCR cross-check | RapidOCR (PP-OCRv4), CPU |
 | Exact PDF reading | PyMuPDF (`annotate.py`) |
 | Evaluation | Own test-set scripts, as for v3 |
+
+## One training run (decided: no pilot, limited budget)
+
+A pilot would catch broken data, a wrong chat template, out-of-memory errors and a model that does not learn. Those
+are caught here instead, mostly for free:
+
+1. **Free checks on CPU before renting anything:** every dataset row validated (images open, sizes, JSON answers parse,
+   tool calls well-formed, thinking traces only where the reasoning rules say); the Qwen3.5 chat template applied with
+   the tokenizer (CPU) to every row; token lengths measured so the sequence limit and batch size are set from real
+   numbers; a sample of rows rendered for a visual check.
+2. **Smoke test at the start of the main run (~30-60 min):** a few hundred steps, then automatic checks — loss going
+   down, no out-of-memory, a handful of validation questions answered in the right format (JSON, tool calls,
+   thinking switch). If anything fails, the pod is stopped after under an hour instead of after days. If it passes,
+   training simply **continues from that checkpoint** — no time wasted.
+3. **Validation during training:** scored every N steps on held-back validation rows; the best checkpoint is kept.
+4. **Early stopping and a step cap:** training stops when validation stops improving (often before epoch 3), and never
+   exceeds the planned number of steps, so the cost cannot run away.
+5. **Checkpoints on a network volume and resume:** an interrupted pod resumes from the last checkpoint instead of
+   starting over.
+6. Balance topped up for the estimated cost before starting; the adapter is downloaded and the pod deleted at the end.
 
 ## Accuracy mode (time traded for correctness)
 
@@ -322,8 +343,9 @@ read, not from model reasoning.
 4. **Test set**: about 300 questions with exact answers from held-back sheets, scored per category and per situation:
    correct answers, correct sources, correct clarifications, correct "not on the sheet", false-confidence rate
    (confident answers that are wrong), layout warnings raised when they should be.
-5. **Training**: 9B pilot (2-3 epochs), then **27B** (2-3 epochs, checkpoints, resume, best on validation) on one
-   80 GB GPU. 122B-A10B only if the 27B falls short on the test set.
+5. **Training — one run** (see "One training run"): free CPU checks, then the **27B** on the RTX PRO 6000 with a smoke
+   test at the start, validation during training, early stopping, checkpoints and resume. 122B-A10B only if the 27B
+   falls short on the test set (a separate budget decision).
 6. **Serving**: vLLM in-house, 16-bit (80 GB GPU) or 8-bit (48 GB GPU), accuracy mode on (double reads, OCR
    cross-check, re-read on disagreement); batching keeps the extra reads affordable. Chat in CLI and app.
 7. **Evaluate and improve**: v4 vs v3 on the test set; fix weak areas with data, not more epochs.
