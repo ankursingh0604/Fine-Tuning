@@ -4,16 +4,39 @@ Decided: **fully in-house (option A)**. No drawings, extracted values or project
 services; the only outside access is a controlled internet fallback for general knowledge (see "Knowledge beyond the drawing"). One fine-tuned
 open model is both the brain (conversation, planning, tool calls) and the eyes (reading drawings), with local tools.
 
-## Model
+## Model — decided: accuracy over speed
 
-- **Qwen3.5-35B-A3B** (mixture of experts: ~35B parameters, ~3B active per token, so large-model accuracy at
-  small-model speed). Unsloth supports Qwen3.5 vision fine-tuning.
-- **Pilot first: Qwen3.5-9B** to prove the data and pipeline cheaply (also runs on the RTX 3060 in 4-bit).
-- 16-bit LoRA (Unsloth advises against 4-bit QLoRA training for Qwen3.5); 2-3 epochs, not more.
+- **Main model: Qwen3.5-27B (dense).** All 27B parameters work on every token, so it is stronger at reading small
+  digits and at reasoning than the 35B-A3B mixture-of-experts model (which uses only ~3B parameters per token and was
+  the choice when speed mattered). Unsloth supports Qwen3.5 vision fine-tuning; the 27B scores 89.4 on OCRBench.
+- **Pilot first: Qwen3.5-9B** to prove the data and pipeline cheaply before the main run.
+- **Step up only if the 27B falls short on the test set:** Qwen3.5-122B-A10B (larger mixture of experts, ~10B active
+  per token). Much heavier to train and run (several GPUs), so only with evidence that it is needed.
+- Training: 16-bit LoRA (Unsloth advises against 4-bit QLoRA training for Qwen3.5), 2-3 epochs, not more; best
+  checkpoint on validation. 27B 16-bit LoRA needs about 56 GB plus our image crops: **one 80 GB GPU (A100/H100)**.
+- Running it: **16-bit (about 54 GB) on an 80 GB GPU, or 8-bit (about 28-30 GB) on a 48 GB GPU** — not 4-bit, which
+  costs accuracy. The RTX 3060 (12 GB) cannot run it.
 - Open hardware questions:
-  1. Is a rented RunPod GPU acceptable for training under the in-house rule, or must training run on own hardware
-     (80 GB A100/H100 for the 35B-A3B; 48 GB for the 9B)?
-  2. Inference for the 35B-A3B needs a GPU with 24 GB or more (48 GB comfortable); the RTX 3060 (12 GB) can only run the 9B.
+  1. Is a rented RunPod GPU acceptable for training under the in-house rule, or must training run on own hardware?
+  2. Which in-house GPU will run it (80 GB for 16-bit, or 48 GB for 8-bit)?
+
+## Accuracy mode (time traded for correctness)
+
+Accuracy comes mainly from **reading each value more than once and checking it**, not from longer thinking on
+transcription. The reader therefore:
+
+1. **Reads every value twice** from different crops (tiles and band windows overlap so each callout, level block
+   and band column appears in at least two crops); the two readings must agree.
+2. **Cross-checks digits with the independent OCR** (RapidOCR / PP-OCRv4) on band values, level blocks and callout
+   numbers.
+3. **Re-reads automatically on any disagreement or failed check** (band arithmetic, level block vs band FL): a third
+   read with a shifted / tighter crop and at 200 dpi; the reading that agrees with the others and passes the checks
+   wins. If none does, the value is kept with a clear "doubtful — check on the drawing" flag, never silently.
+4. **Trains and reads at two scales** (150 and 200 dpi crops), using 200 dpi when the source allows it.
+5. **Thinks** on checks, judgements, multi-step questions and doubtful readings (see "Reasoning rules").
+6. Vector PDFs need none of this: they are read exactly from the text layer.
+
+Expected time per scanned sheet in accuracy mode: roughly 5-15 minutes (to be measured); vector PDFs: seconds.
 
 ## Architecture: brain + tools in a loop
 
@@ -146,8 +169,9 @@ the on-hold PDF checker) already reads every page of a vector PDF exactly.
    - values that should match across a boundary (e.g. last band column of one sheet vs first of the next) checked.
 5. **Questions across the whole PDF**, every answer citing its sheet: "which sheet covers CH 1242662.9?", "all
    bridges below MIN FL in this PDF", "highest fill between 1215+000 and 1240+000" across several sheets.
-6. **Time and progress:** vector PDF, all sheets in seconds; scanned, about 1-2 minutes per sheet with vLLM (about
-   10-20 minutes for 9 sheets). Progress page by page; each sheet can be questioned as soon as it is done.
+6. **Time and progress:** vector PDF, all sheets in seconds; scanned, roughly 5-15 minutes per sheet in accuracy mode
+   (about 1-2 hours for 9 scanned sheets; to be measured). Progress page by page; each sheet can be questioned as soon
+   as it is done.
 
 **Versions — decided: a sheet number already in the store is kept as a separate version, never replaced.**
 
@@ -206,8 +230,9 @@ score in the test set.
 
 ## Reasoning rules (part of situation awareness)
 
-The model decides **when** to reason, just as it decides whether to answer, ask back or warn. Reasoning on every
-question would make simple answers and sheet reading several times slower without making them more accurate.
+The model decides **when** to reason, just as it decides whether to answer, ask back or warn. Even with accuracy
+over speed, thinking on pure transcription does not make a digit more likely to be read correctly — re-reading and
+cross-checking does (see "Accuracy mode"). Thinking is used where it adds accuracy: combining, checking, deciding.
 
 | Question type | Reasoning | Example |
 |---|---|---|
@@ -251,8 +276,8 @@ read, not from model reasoning.
    long tail (whole-sheet text index + `look`). Connect the vector-PDF route (`annotate.py`) to the same store.
    Layout detection is done (layout.py).
 3. **Dataset v4**
-   - Vision: everything on the sheet, in Qwen3.5's image and box format; low-DPI copies (rendered at 60-120 dpi and
-     scaled up).
+   - Vision: everything on the sheet, in Qwen3.5's image and box format, at 150 and 200 dpi; low-DPI copies
+     (rendered at 60-120 dpi and scaled up).
    - **Label and heading reading (new):** "read the row labels of this band strip" and "read the headings of this
      panel", generated from the annotations (every label's text is stored). The reader then asks the model for the
      labels and compares with the OCR (RapidOCR / PP-OCRv4): agreement confirms the layout, disagreement is flagged.
@@ -269,8 +294,10 @@ read, not from model reasoning.
 4. **Test set**: about 300 questions with exact answers from held-back sheets, scored per category and per situation:
    correct answers, correct sources, correct clarifications, correct "not on the sheet", false-confidence rate
    (confident answers that are wrong), layout warnings raised when they should be.
-5. **Training**: 9B pilot (2-3 epochs), then 35B-A3B (2-3 epochs, checkpoints, resume, best on validation).
-6. **Serving**: vLLM in-house, batched questions (target: whole-sheet read in about 1-2 minutes); chat in CLI and app.
+5. **Training**: 9B pilot (2-3 epochs), then **27B** (2-3 epochs, checkpoints, resume, best on validation) on one
+   80 GB GPU. 122B-A10B only if the 27B falls short on the test set.
+6. **Serving**: vLLM in-house, 16-bit (80 GB GPU) or 8-bit (48 GB GPU), accuracy mode on (double reads, OCR
+   cross-check, re-read on disagreement); batching keeps the extra reads affordable. Chat in CLI and app.
 7. **Evaluate and improve**: v4 vs v3 on the test set; fix weak areas with data, not more epochs.
 
 ## Targets (aims, to be measured)
@@ -281,6 +308,7 @@ read, not from model reasoning.
 | Values at 75-100 dpi | >= 90 % (after low-DPI training) |
 | Questions in any wording, incl. multi-step and follow-ups | >= 90 % correct on the test set |
 | Situation handling (clarify / not on sheet / warn / refuse to guess) | each situation scored; false-confidence rate as low as possible |
+| Doubtful values | every value that failed its checks or disagreed between reads is flagged — none passed silently |
 | Data | never leaves own systems |
 
 ## What it will not do
