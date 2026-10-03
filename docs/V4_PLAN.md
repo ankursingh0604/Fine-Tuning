@@ -1,6 +1,7 @@
 # v4 plan: an L-section assistant that works like an engineer's assistant
 
-Decided: **fully in-house (option A)**. No drawings, values or questions go to outside AI services. One fine-tuned
+Decided: **fully in-house (option A)**. No drawings, extracted values or project-specific questions go to outside
+services; the only outside access is a controlled internet fallback for general knowledge (see "Knowledge beyond the drawing"). One fine-tuned
 open model is both the brain (conversation, planning, tool calls) and the eyes (reading drawings), with local tools.
 
 ## Model
@@ -24,6 +25,8 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
 | `band_at(chainage)` | Nearest band column, never interpolated |
 | `calc(expression)` | Exact arithmetic (the model never does arithmetic in its head) |
 | `check(rule, ...)` | FL >= MIN FL, ruling gradient, track centres >= 4.725 m, free board, band arithmetic, curve formulas |
+| `search_library(query)` | Searches the local reference library (codes, manuals, standards, abbreviation lists) |
+| `web_search(query)` | Internet fallback for general knowledge only: project details stripped, user approves the search, answer labelled |
 
 Memory: the store keeps every sheet read (questions across the whole line); the conversation keeps follow-ups
 ("its HFL?", "and 561?").
@@ -72,6 +75,56 @@ For vector PDFs the same store is filled exactly from `annotate.py` (no model ne
 
 **Test set:** includes long-tail questions (notes, legend items, small labels, remarks) scored separately from the
 structured items, so coverage is measured, not assumed.
+
+## L-section layouts the model was not trained on
+
+Without training, any layout already gives: every printed word with its position (whole-sheet text index), the
+tables found from their rules, labels and column spacing (`layout.py`), and `look` on any spot. What does not carry
+over is **meaning and structure** (which number belongs to which bridge or row, what a new callout style means), and
+rows the model has never seen (e.g. "BANK HEIGHT") are skipped today. v4 closes these gaps:
+
+1. **Generic table reading (new task).** "Read this table: for each row give its printed label and the value in every
+   column", answered as `{label: {chainage: value}}`, not only the 7 trained fields. Trained on deliberately varied
+   layouts generated from our sheets: rows re-ordered, dropped and duplicated; labels renamed or reworded (e.g. "GROUND
+   LEVEL" / "NGL" / "EXISTING GROUND"); extra rows with new labels; different row heights and column spacing; columns
+   at 10/20/25/50 m; tables moved on the sheet. Unknown rows are then stored by their printed label and are
+   answerable ("bank height at 1242+660") instead of skipped.
+2. **Generic text-block reading (new task).** Group nearby text into blocks (callouts, level blocks, boxes) and read
+   each block as printed with its position, even when the model does not know the style. Trained on our callouts
+   re-drawn in varied styles (field order, separators, box shapes, abbreviations). Known fields are mapped when
+   recognisable (bridge number, span, levels); everything else is kept as printed text.
+3. **Label and heading reading** (above) plus label-to-field mapping by meaning, so "BANK HEIGHT", "FORMATION WIDTH" or
+   "PROP. DN LINE FL" become named fields or stay as their own labelled rows.
+4. **Store and answers by label.** The store keeps both the trained fields and generic `label -> values` tables and text
+   blocks, each with its sheet position. Answers cite where on the sheet the value was found.
+5. **Situation awareness.** On a new layout the reader says so; answers from generic tables/blocks are marked
+   "new layout: check"; checks that still apply (FL - GL = cut/fill when those rows exist) are run on the identified rows.
+6. **Becoming reliable on a new layout:** 5-10 annotated sheets of that layout in the next training round.
+7. **Test set:** held-out layouts the model never saw (synthetic variants and any real new-layout sheets), scored
+   separately: rows identified, values read, blocks read, correct "new layout" warnings.
+
+## Knowledge beyond the drawing (option 3: local library first, internet as a controlled fallback)
+
+Some questions need knowledge that is not on any sheet ("what does CTP mean?", "minimum track centre per IRS?",
+"free board required by the code?").
+
+1. **Local reference library (first).** Documents supplied by the team (IRS codes and manuals, RDSO standards,
+   Schedule of Dimensions, organisation abbreviation lists, specifications) are indexed in the store and searched
+   locally with the new tool `search_library(query)`; answers cite document and section.
+2. **Internet (fallback only), with the tool `web_search(query)`, under these controls:**
+   - only for general knowledge, and only when the library has no answer;
+   - project details are stripped from the search text before anything leaves (bridge numbers, chainages, levels,
+     sheet and drawing numbers, names, locations);
+   - the user sees the exact search text and approves it before it is sent;
+   - the answer is labelled "from the internet: <source>" and kept separate from drawing data;
+   - every search is logged; an administrator can switch internet search off entirely.
+3. **Never sent out:** drawings, extracted values, sheet text, or questions containing project details.
+4. **Answers say where each part comes from:** the drawing (sheet, chainage, column), the library (document, section)
+   or the internet (source) — never blended without attribution. Values always come from the drawing; general rules
+   from the library or the web.
+5. **Training:** conversations where the model picks the right source (store / `look` / library / web), writes a
+   clean general search (no project details), asks for approval, and labels the answer. **Test set:** knowledge
+   questions scored for correct source, correct labelling, and zero project details in any web query (leak check).
 
 ## Multi-sheet PDFs
 
@@ -206,6 +259,9 @@ read, not from model reasoning.
      OCR stays as the independent check.
    - Reasoning: existing chain-of-thought families, nearest column, MIN FL flag, plus thinking traces only where the
      reasoning rules say so (see "Reasoning rules").
+   - Unseen layouts: generic table reading and generic text-block reading on layout variants generated from our
+     sheets (see "L-section layouts the model was not trained on").
+   - Knowledge sources: choosing store / `look` / library / web, clean general web queries, approval, labelling.
    - **Agent behaviour:** code-generated conversations (question -> tool calls -> real tool results -> reasoning ->
      answer), covering every situation in the tables above, including multi-turn, clarifying, "not on the sheet",
      failed checks, unknown layouts and non-L-section inputs.
