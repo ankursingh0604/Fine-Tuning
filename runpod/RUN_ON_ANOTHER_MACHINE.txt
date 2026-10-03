@@ -15,6 +15,7 @@ Files (all in this kit)
 - read_sheet.py      read a whole sheet image (uses sheet_reader.py)
 - sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
 - sheet_qa.py        answers questions about a sheet from what read_sheet.py read
+- layout.py          checks the sheet's layout before reading (see 'Layout check' below)
 - test_sheets/       whole-sheet images of test sheets 100, 104, 110 at 150 and 75 dpi
 - examples/          crops from test sheet 100 with sample questions
 - requirements.txt
@@ -62,6 +63,14 @@ Read a WHOLE sheet image (50-200 dpi)
   Web page: the "Read a whole sheet" tab of app.py does the same, with a CSV download.
   test_sheets/ has sheets 100, 104, 110 (never seen in training) at 150 and 75 dpi.
   Below ~100 dpi the text is under 13 px tall, so expect misread digits; 150-200 dpi is best.
+  Layout check: before reading, layout.py checks the sheet's layout from the image (table rules, band row
+  labels read with a local OCR, column spacing, title block / TBM headings) and prints
+  "Layout: known / similar / unknown (confidence high / medium / low)".
+    known    - this drawing set's layout: read exactly as trained
+    similar  - same rows but moved / re-ordered / different spacing: read from the detected positions, check values
+    unknown  - rows missing or not recognised: those parts are skipped and the reasons listed, nothing is guessed
+  Band values that do not add up (FL - GL = cut/fill, RL - FL = 0.762, FL difference) also lower the confidence.
+  The OCR (rapidocr_onnxruntime) is in requirements.txt; without it the row labels are not checked.
 
 Expected answer for the quick test (bridge 560, sheet 100):
   {"bridge_id": "560", "existing_type": "ARCH", "existing_span": "1 X 0.61", "crossing": "DRAIN",

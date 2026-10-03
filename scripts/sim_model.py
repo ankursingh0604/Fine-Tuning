@@ -58,6 +58,10 @@ class SimModel:
             near = min(win, key=lambda c: abs(c["chainage"] - meta["ch"]))
             return D.fenced({"bridge_chainage": meta["ch"], "nearest_column": D.band_record(near),
                              "distance_m": round(abs(near["chainage"] - meta["ch"]), 3)})
+        if k in ("title", "tbm") and meta.get("clip"):            # it can only read what the crop shows
+            region = (a.get("regions") or {}).get("title_block" if k == "title" else "tbm_table")
+            if region and visible(region, meta["clip"]) < 0.9:
+                return "I cannot see a title block in this crop." if k == "title" else "There is no TBM table in this crop."
         if k == "title":
             info = a["sheet_info"]
             t = {k2: info.get(k2) for k2 in ("drawing_no", "sheet_no", "title", "chainage_from", "chainage_to", "scale", "date", "client")}

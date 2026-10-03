@@ -3,12 +3,14 @@
 A whole A0 sheet is far too large for the model to read in one image (at 1400 px wide its text is ~4 px
 tall). So the reader does what a person would do with a magnifier:
 
-  1. measures the image's dpi from the drawing's frame lines and brings it to the training scale (150 dpi)
+  1. measures the image's dpi from the drawing's frame lines and brings it to the training scale (150 dpi),
+     then checks the layout (layout.py): this drawing set's layout uses exactly the trained crops; another
+     layout is read from the detected table rules, labels and column spacing, or reported as unreadable
   2. tiles the drawing into training-size crops and asks each "find all bridge callouts" (trained task)
   3. crops around each bridge callout + level block and asks "read the callout as JSON" (trained task)
   4. finds the L-section data bands, reads their chainage range once, then for each bridge crops the band
      columns around it (with the row labels, as in training) and asks for the nearest column (trained task)
-  5. reads the title block and the TBM table
+  5. reads the title block and the TBM table (found by their headings if they are not at the usual place)
   6. checks everything it read (band arithmetic, FL vs MIN FL REQ., level block vs bands) so misreads
      are flagged rather than passed on silently
 
@@ -34,6 +36,7 @@ ROWS_Y = (1863.0, 2236.0)        # pt: data-band rows (cut/fill ... chainage) in
 DRAW_X, DRAW_Y = (45.0, 3165.0), (55.0, 1650.0)   # pt: plan + L-section profile, where callouts are printed
 TITLE = (3175, 1868, 3740, 2335)
 TBM = (3175, 490, 3740, 872)
+ROW_ORDER = ["cut_fill", "fl_difference", "prop_rl", "prop_fl", "track_distance", "exg_up_fl", "ground_level", "chainage"]
 RAIL = 0.762                     # note 5
 TOL = 0.0025
 
@@ -102,6 +105,7 @@ class Sheet:
             self.warnings.append(f"The image is about {dpi:.0f} dpi: text is only {9.9 * dpi / 72:.0f} px tall, "
                                  f"so expect misread digits (best at 150-200 dpi).")
         self.gray = gw
+        self.z = Z                                # px per pt in self.img (the training scale)
 
     def px(self, x_pt, y_pt):
         return x_pt * Z + self.dx, y_pt * Z + self.dy
@@ -148,15 +152,16 @@ class Reader:
         return self.model.ask(imgs, q, meta=meta) if getattr(self.model, "wants_meta", False) else self.model.ask(imgs, q)
 
     # 1-2: find bridges
-    def find_bridges(self, sh):
+    def find_bridges(self, sh, area=(DRAW_X, DRAW_Y)):
+        (X0, X1), (Y0, Y1) = area
         side, step = TILE / Z, STRIDE / Z
-        xs = np.arange(DRAW_X[0], DRAW_X[1] - side + step, step)
-        ys = np.arange(DRAW_Y[0], DRAW_Y[1] - side + step, step)
+        xs = np.arange(X0, X1 - side + step, step)
+        ys = np.arange(Y0, Y1 - side + step, step)
         found = {}
         n = 0
         for y in ys:
             for x in xs:
-                x0, y0 = min(x, DRAW_X[1] - side), min(y, DRAW_Y[1] - side)
+                x0, y0 = min(x, X1 - side), min(y, Y1 - side)
                 clip = (x0, y0, x0 + side, y0 + side)
                 ans = self.ask([sh.crop(clip, (TILE, TILE))], Q_FIND, {"kind": "find", "clip": clip})
                 n += 1
@@ -187,54 +192,149 @@ class Reader:
         return parse_json(ans) if isinstance(parse_json(ans), dict) else None, ans
 
     # 4: data bands
-    def band_image(self, sh, table, start_idx):
-        left, right, _ = table
-        first_x = right + 10.9
-        x0 = first_x + start_idx * PITCH - COL_HALF
-        x1 = first_x + (start_idx + 15) * PITCH + COL_HALF
-        strip = sh.crop((left + 3, ROWS_Y[0], right + 0.5, ROWS_Y[1]))
-        band = sh.crop((x0, ROWS_Y[0], x1, ROWS_Y[1]))
+    def band_image(self, sh, layout, start_idx):
+        """Label strip + 16 columns, as in training. layout["rows"] (other layouts) re-stacks the rows in the
+        trained order, so the model sees the arrangement it learnt even when the sheet orders them differently."""
+        left, right, _ = layout["table"]
+        pitch, first_x = layout.get("pitch", PITCH), layout.get("first_x", right + 10.9)
+        x0 = first_x + start_idx * pitch - COL_HALF
+        x1 = first_x + (start_idx + 15) * pitch + COL_HALF
+        if not layout.get("rows"):
+            strip = sh.crop((left + 3, ROWS_Y[0], right + 0.5, ROWS_Y[1]))
+            band = sh.crop((x0, ROWS_Y[0], x1, ROWS_Y[1]))
+        else:
+            parts = []
+            rows = layout["rows"]
+            for i, f in enumerate(ROW_ORDER):
+                r = rows.get(f)
+                if r is None:                        # a row the sheet does not have: blank, and its value dropped later
+                    h = int(round(45 * Z))
+                    parts.append((Image.new("RGB", (1, h), "white"), Image.new("RGB", (1, h), "white")))
+                    continue
+                y0 = r[0] - (1.8 if i == 0 else 0.5)
+                y1 = r[1] + (2.6 if i == len(ROW_ORDER) - 1 else -0.5)
+                h = int(round((y1 - y0) * Z))
+                parts.append((sh.crop((left + 3, y0, right + 0.5, y1), (int(round((right - left - 2.5) * Z)), h)),
+                              sh.crop((x0, y0, x1, y1), (int(round((x1 - x0) * Z)), h))))
+            sw = max(a.width for a, _ in parts)
+            bw = max(b.width for _, b in parts)
+            hh = sum(a.height for a, _ in parts)
+            strip, band = Image.new("RGB", (sw, hh), "white"), Image.new("RGB", (bw, hh), "white")
+            y = 0
+            for a, b in parts:
+                strip.paste(a, (0, y))
+                band.paste(b, (0, y))
+                y += a.height
         img = Image.new("RGB", (strip.width + band.width, max(strip.height, band.height)), "white")
         img.paste(strip, (0, 0))
         img.paste(band, (strip.width, 0))
         return pad28(img), (x0, x1)
 
-    def band_range(self, sh, table, start_idx):
-        img, (x0, x1) = self.band_image(sh, table, start_idx)
+    def band_range(self, sh, layout, start_idx):
+        img, (x0, x1) = self.band_image(sh, layout, start_idx)
         ans = self.ask([img], Q_RANGE, {"kind": "range", "xrange": (x0, x1)})
         m = re.search(r"chainage\s+([\d.]+)\s+to\s+([\d.]+)", ans)
-        return (float(m.group(1)), float(m.group(2))) if m else None
-
-    def band_layout(self, sh):
-        """Where the data bands are and the chainage of their first column: {table, start_ch, n_cols} or None."""
-        table = sh.band_table()
-        if not table:
+        if not m:
             return None
-        n_cols = int(round((table[2] - 5.6 - (table[1] + 10.9)) / PITCH)) + 1
-        rng = self.band_range(sh, table, 0)
-        return {"table": list(table), "start_ch": rng[0], "n_cols": n_cols} if rng else None
+        step = re.search(r"one every\s+([\d.]+)\s*m", ans)
+        return float(m.group(1)), float(m.group(2)), float(step.group(1)) if step else 20.0
+
+    def band_layout(self, sh, found=None, trained=False):
+        """Where the data bands are and the chainage of their first column: {table, start_ch, n_cols, ...} or None.
+        found: the band table detected by layout.analyse() (for another layout; trained=True keeps the trained crop
+        style when the sheet is this drawing set's layout but the fixed search missed the table)."""
+        if found is None:
+            table = sh.band_table()
+            if not table:
+                return None
+            lay = {"table": list(table)}
+            n_cols = int(round((table[2] - 5.6 - (table[1] + 10.9)) / PITCH)) + 1
+        elif trained:
+            lay = {"table": [found["strip"][0], found["strip"][1], found["end"]]}
+            n_cols = int(round((found["end"] - 5.6 - (found["strip"][1] + 10.9)) / PITCH)) + 1
+        else:
+            lay = {"table": [found["strip"][0], found["strip"][1], found["end"]], "pitch": found["pitch"],
+                   "first_x": found["first_x"],
+                   "rows": {r["field"]: (r["top"], r["bottom"]) for r in found["rows"] if r["field"] in ROW_ORDER}}
+            n_cols = int((found["end"] - 5.6 - found["first_x"]) / found["pitch"]) + 1
+        rng = self.band_range(sh, lay, 0)
+        if not rng:
+            return None
+        lay.update({"start_ch": rng[0], "n_cols": n_cols})
+        if rng[2] != 20.0:
+            lay["step"] = rng[2]
+        return lay
 
     def band_at(self, sh, layout, ch, name):
         """The band column nearest chainage ch (no interpolation), read by the model, or None if ch is off the bands."""
-        idx = int(round((ch - layout["start_ch"]) / 20))
+        idx = int(round((ch - layout["start_ch"]) / layout.get("step", 20)))
         if not 0 <= idx < layout["n_cols"]:
             return None
         s = max(0, min(idx - 8, layout["n_cols"] - 16))
-        img, (x0, x1) = self.band_image(sh, layout["table"], s)
+        img, (x0, x1) = self.band_image(sh, layout, s)
         band = parse_json(self.ask([img], Q_BAND.format(name=name, ch=g(ch)), {"kind": "band", "xrange": (x0, x1), "ch": ch}))
-        return band if isinstance(band, dict) else None
+        if not isinstance(band, dict):
+            return None
+        col = band.get("nearest_column")
+        if layout.get("rows") and isinstance(col, dict):    # values of rows this sheet does not have were not seen
+            for f in ROW_ORDER[:-1]:
+                if f not in layout["rows"]:
+                    col.pop(f, None)
+        return band
+
+    # 5: title block and TBM table
+    def panel_reads(self, sh, lay):
+        """Title block and TBM table: at the trained positions first; if the answer is not a valid title block /
+        TBM table (or the panel is elsewhere), find them by their printed headings and read them there."""
+        from layout import panel_sections
+        out, where = {}, {}
+        jobs = (("title", TITLE, Q_TITLE, lambda v: isinstance(v, dict) and any(v.get(k) for k in ("sheet_no", "drawing_no", "title"))),
+                ("tbm", TBM, Q_TBM, lambda v: isinstance(v, list) and any(isinstance(r, dict) and r.get("tbm_id") for r in v)))
+        trained_panel = lay["panel_x"] is not None and abs(lay["panel_x"] - 3175.4) <= 6
+        sections = None
+        for key, rect, q, valid in jobs:
+            val = None
+            if trained_panel or lay["panel_x"] is None:
+                val = parse_json(self.ask([sh.crop(rect)], q, {"kind": key, "clip": rect}))
+            if not valid(val) and lay["panel_x"] is not None:
+                if sections is None:
+                    self.log("  looking for the title block / TBM table by their headings ...")
+                    sections = panel_sections(sh, lay["panel_x"])
+                if key in sections:
+                    val = parse_json(self.ask([sh.crop(sections[key])], q, {"kind": key, "clip": sections[key]}))
+                    if valid(val):
+                        where[key] = "found by its heading"
+            out[key] = val if valid(val) else None
+        return out["title"], out["tbm"], where
 
     def read(self, image):
+        import layout as L
         sh = Sheet(image)
         result = {"dpi": round(sh.dpi), "warnings": list(sh.warnings), "bridges": [], "title": None, "tbm": None, "findings": []}
         self.log(f"image {image.size[0]} x {image.size[1]} px, about {sh.dpi:.0f} dpi")
+        self.log("checking the sheet layout ...")
+        lay = L.analyse(sh)
+        known = lay["status"] == "known"
+        self.log(f"  layout: {lay['status']}" + (f" - {'; '.join(lay['notes'])}" if lay["notes"] else ""))
         self.log("finding bridge callouts ...")
-        calls = self.find_bridges(sh)
+        if known:
+            calls = self.find_bridges(sh)
+        else:
+            band_top = min(r["top"] for r in lay["band"]["rows"]) if lay["band"] else 2330.0
+            calls = self.find_bridges(sh, ((FRAME_L - 2, (lay["panel_x"] or FRAME_R) - 5), (FRAME_T + 2, band_top)))
         ids = sorted({bid for bid, _ in calls})
-        layout = self.band_layout(sh)
+        if known:
+            layout = self.band_layout(sh)
+            if layout is None and lay["band"]:      # the fixed search missed the table: use the one found, trained crop style
+                layout = self.band_layout(sh, lay["band"], trained=True)
+        elif lay["band"] and lay["status"] == "similar":
+            layout = self.band_layout(sh, lay["band"])
+        else:
+            layout = None
         result["band_layout"] = layout
         if not layout:
-            result["warnings"].append("The L-section data bands were not found; band values were not read.")
+            result["warnings"].append("The L-section data bands were not found; band values were not read." if known or not lay["band"]
+                                      else "The data-band rows could not all be identified; band values were not read.")
         self.log(f"reading {len(ids)} bridges ...")
         for bid in ids:
             view = "L-section" if (bid, "L-section") in calls else "plan"
@@ -248,13 +348,60 @@ class Reader:
             rec["checks"] = check_bridge(rec)
             result["bridges"].append(rec)
         self.log("reading title block and TBM table ...")
-        title = parse_json(self.ask([sh.crop(TITLE)], Q_TITLE, {"kind": "title"}))
-        result["title"] = title if isinstance(title, dict) else None
-        tbm = parse_json(self.ask([sh.crop(TBM)], Q_TBM, {"kind": "tbm"}))
-        result["tbm"] = tbm if isinstance(tbm, list) else None
+        result["title"], result["tbm"], where = self.panel_reads(sh, lay)
         result["findings"] = [c for b in result["bridges"] for c in b["checks"]]
+        result["layout"] = verdict(lay, result, where)
+        if result["layout"]["confidence"] != "high":
+            result["warnings"] += result["layout"]["warnings"]
         result["overlay"] = overlay(sh, result)
         return result
+
+
+# ---------------------------------------------------------------- layout verdict (warn instead of guessing)
+
+LEVELS_OF_TRUST = ["low", "medium", "high"]
+
+
+def band_adds_up(col):
+    try:
+        return (abs(col["prop_rl"] - col["prop_fl"] - RAIL) <= TOL and abs(col["prop_fl"] - col["ground_level"] - col["cut_fill"]) <= TOL
+                and abs(col["prop_fl"] - col["exg_up_fl"] - col["fl_difference"]) <= TOL)
+    except (KeyError, TypeError):
+        return False
+
+
+def verdict(lay, result, where):
+    """How far the reading can be trusted, from the layout found and from checks on what was read."""
+    notes = list(lay["notes"])
+    lower = lambda a, b: min(a, b, key=LEVELS_OF_TRUST.index)      # noqa: E731
+    cols = [b["band"]["nearest_column"] for b in result["bridges"]
+            if isinstance(b["band"], dict) and isinstance(b["band"].get("nearest_column"), dict)]
+    full = [c for c in cols if all(k in c for k in ROW_ORDER[:-1])]
+    ok = sum(1 for c in full if band_adds_up(c))
+    conf = {"known": "high", "similar": "medium", "unknown": "low"}[lay["status"]]
+    if len(full) >= 3 and ok / len(full) < 0.5:
+        conf = "low"
+        notes.append(f"Only {ok} of {len(full)} band columns add up (FL - GL = cut/fill, RL - FL = 0.762, FL difference): "
+                     "the band rows probably mean something different on this sheet.")
+    elif len(full) >= 3 and ok / len(full) < 0.8:
+        conf = lower(conf, "medium")
+        notes.append(f"{len(full) - ok} of {len(full)} band columns do not add up - several values are probably misread.")
+    if result["title"] is None:
+        conf = lower(conf, "medium")
+        notes.append("The title block was not found or could not be read.")
+    if result["tbm"] is None:
+        notes.append("The TBM table was not found or could not be read.")
+    if not result["bridges"] and result["title"] is None:
+        conf = "low"
+        notes.append("No bridges and no title block were found: this may not be a Plan & L-Section sheet.")
+    for k, w in where.items():
+        notes.append(f"The {'title block' if k == 'title' else 'TBM table'} was not at its usual position; it was {w}.")
+    lead = {"high": None,
+            "medium": "This sheet's layout differs from the sheets the model was trained on; check the values.",
+            "low": "This sheet's layout differs from the sheets the model was trained on; treat the values as unreliable."}[conf]
+    return {"status": lay["status"], "confidence": conf, "notes": notes,
+            "band_columns_checked": len(full), "band_columns_adding_up": ok,
+            "warnings": ([lead] if lead else []) + notes}
 
 
 # ---------------------------------------------------------------- checks on what was read

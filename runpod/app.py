@@ -163,6 +163,9 @@ def build_ui(model):
         lines = [f"**Sheet {t.get('sheet_no', '?')}** {t.get('title', '')} {t.get('chainage_from', '')} - {t.get('chainage_to', '')} "
                  f"(image about {result['dpi']} dpi). Bridges found: {len(bridges)}, read: {sum(1 for b in bridges if b['data'])}, "
                  f"with band values: {sum(1 for b in bridges if b['band'])}. TBMs: {len(result['tbm'] or [])}."]
+        lay = result.get("layout")
+        if lay:
+            lines.append(f"Layout: **{lay['status']}** (confidence {lay['confidence']})")
         lines += [f"- **WARNING**: {w}" for w in result["warnings"]]
         lines += [f"- **{f['severity']}**: {f['message']}" for f in result["findings"]]
         rows = []

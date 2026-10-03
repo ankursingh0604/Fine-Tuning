@@ -6,5 +6,6 @@ peft>=0.15
 accelerate
 pillow
 numpy                    # sheet_reader.py (whole-sheet reading)
+rapidocr_onnxruntime     # layout.py: reads the band row labels and panel headings (local CPU OCR, offline)
 gradio                   # only for app.py (the web page)
 bitsandbytes             # only for --4bit

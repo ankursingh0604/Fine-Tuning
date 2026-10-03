@@ -258,6 +258,9 @@ class SheetQA:
                f"Image about {self.r.get('dpi')} dpi. {len(self.bridges)} bridges found, {sum(1 for b in self.bridges if b['data'])} read, "
                f"{sum(1 for b in self.bridges if b['band'])} with band values; {len(self.r.get('tbm') or [])} TBMs.",
                f"{n_flag} FLAG, {n_chk} CHECK."]
+        lay = self.r.get("layout")
+        if lay:
+            out.append(f"Layout: {lay['status']} (confidence {lay['confidence']}).")
         out += [f"WARNING: {w}" for w in self.r.get("warnings") or []]
         return "\n".join(out)
 
@@ -265,9 +268,18 @@ class SheetQA:
 
     def answer(self, question):
         q = question.strip()
-        ql = q.lower()
-        if not q or re.fullmatch(r"help|\?|what can i ask.*", ql):
+        if not q or re.fullmatch(r"help|\?|what can i ask.*", q.lower()):
             return HELP
+        text = self._answer(q)
+        lay = self.r.get("layout") or {}
+        if lay.get("confidence") == "low":
+            return "CAUTION: this sheet's layout differs from the trained sheets - treat these values as unreliable (see summary).\n" + text
+        if lay.get("confidence") == "medium":
+            return "Note: this sheet's layout differs from the trained sheets - check these values.\n" + text
+        return text
+
+    def _answer(self, q):
+        ql = q.lower()
         ch, ch_text = to_m(q)
         rest = q.replace(ch_text, " ") if ch_text else q
         b = self.find_bridge(rest)
