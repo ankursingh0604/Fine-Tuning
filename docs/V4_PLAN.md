@@ -68,6 +68,20 @@ are caught here instead, mostly for free:
    starting over.
 6. Balance topped up for the estimated cost before starting; the adapter is downloaded and the pod deleted at the end.
 
+**GPU utilisation (v3 used only ~36% of the L40S).** Likely causes in v3's `train.py`: images loaded, resized and
+patched in the main process every step (no data-loader workers), a small 3B model finishing each step quickly and
+then waiting, and generation-based evaluations (before/after comparisons, checks every 150 steps) that use the GPU
+lightly. Idle GPU time is paid time, so for v4:
+
+- images pre-processed once to their final size before training;
+- 4-8 data-loader workers with pinned memory (the RTX PRO 6000 pod has 16 vCPU);
+- batch size set by measurement in the smoke test (raise until ~85% GPU memory), not a fixed rule;
+- examples grouped by length to cut padding;
+- evaluation during training kept light (validation loss + a small format check); the full generation-based
+  evaluation runs afterwards in-house with vLLM, not on the rented GPU;
+- the smoke test records GPU utilisation and memory and must reach about 80% utilisation before the run continues.
+- The 27B model itself does ~9x more work per step than the 3B, so starvation is less likely to begin with.
+
 ## Accuracy mode (time traded for correctness)
 
 Accuracy comes mainly from **reading each value more than once and checking it**, not from longer thinking on
