@@ -16,9 +16,10 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
   checkpoint on validation. 27B 16-bit LoRA needs about 56 GB plus our image crops: **one 80 GB GPU (A100/H100)**.
 - Running it: **16-bit (about 54 GB) on an 80 GB GPU, or 8-bit (about 28-30 GB) on a 48 GB GPU** — not 4-bit, which
   costs accuracy. The RTX 3060 (12 GB) cannot run it.
-- Open hardware questions:
-  1. Is a rented RunPod GPU acceptable for training under the in-house rule, or must training run on own hardware?
-  2. Which in-house GPU will run it (80 GB for 16-bit, or 48 GB for 8-bit)?
+- **Training on RunPod — decided, acceptable.** Pilot (9B) on a 48 GB GPU (L40S / A6000), roughly $10-30. Main run
+  (27B) on one 80 GB GPU (A100 / H100), roughly 1.5-3 days and $100-250 for 2-3 epochs (estimate; depends on the final
+  dataset size). Pods are private and deleted after training; the adapter is downloaded and kept in-house.
+- Open hardware question: which in-house GPU will run it (80 GB for 16-bit, or 48 GB for 8-bit)?
 
 ## Accuracy mode (time traded for correctness)
 
@@ -267,7 +268,8 @@ read, not from model reasoning.
 
 ## Phases
 
-0. **Data and decisions**: new L-section PDFs (text layer, layout, annotation); held-back test sheets; hardware answers.
+0. **Data and decisions**: new L-section PDFs (text layer, layout, annotation); held-back test sheets; the in-house
+   inference GPU (training on RunPod is decided).
 1. **Store and tools** (code only): SQLite store of everything on every sheet, with sheet versions (see "Multi-sheet
    PDFs"); multi-page PDF intake (page split, page type, vector/scanned routing, cross-sheet checks); the six tools;
    tested on vector PDFs.
