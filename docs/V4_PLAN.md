@@ -28,6 +28,51 @@ open model is both the brain (conversation, planning, tool calls) and the eyes (
 Memory: the store keeps every sheet read (questions across the whole line); the conversation keeps follow-ups
 ("its HFL?", "and 561?").
 
+## Full coverage: everything on an uploaded sheet
+
+Goal: any piece of information printed on an uploaded sheet can be answered. Two layers, because "everything"
+splits into what can be listed in advance and a long tail that cannot.
+
+**Today (v3 + whole-sheet reader, from an image):** bridge callouts, level blocks, title block, TBMs, and band values
+only at bridge chainages (plus any chainage asked about). Curves, transition points, gradients, grade points, notes,
+legend, abbreviations, km posts, stations, reference drawings, issue record and all other text are **not** extracted
+from images yet. From a **vector PDF**, `annotate.py` already extracts all of these exactly (including `all_text`),
+but that route is not connected to question answering yet.
+
+**Layer 1 — full sweep into the store** (everything with a known structure), read once per sheet:
+
+| Item | How |
+|---|---|
+| All data-band columns (~250 per sheet, not just at bridges) | ~16 band-window questions per sheet (each crop covers 16 columns) |
+| Bridges: callouts and level blocks | as today |
+| Curves (plan and L-section boxes), transition points ST/TTP1, TC/CTP1, CT/CTP2, TS/TTP2 | tiles + trained curve tasks |
+| Gradients, grade points, vertical intersection points, km posts | tiles + trained tasks |
+| Notes, legend, abbreviations | right-panel sections (found by headings) |
+| Title block, TBM table, issue record, reference drawings, stations, officers | right-panel sections |
+| Drawing checks | band arithmetic, FL vs MIN FL, curve formulas, plan vs L-section |
+
+For vector PDFs the same store is filled exactly from `annotate.py` (no model needed).
+
+**Layer 2 — the long tail** (anything else printed):
+
+- **Whole-sheet text index:** every word on the sheet with its position, from the local OCR (RapidOCR / PP-OCRv4)
+  for images, or the PDF text layer for vector PDFs. Answers "where does it say ...?" and "what is written near
+  CH ...?".
+- **`look`:** the model zooms into that spot and reads or interprets it, so any small label, remark or symbol can be
+  answered on request even if it was not extracted in advance.
+
+**Limits (stated in answers when they apply):**
+
+- From images not every value will be perfect: tiny, overlapping or low-DPI text can be misread. Checks catch many
+  misreads, but ordinary text (a note's wording, a station name) has nothing to check it against. Vector PDFs are exact.
+- Graphics are not data: the model can say a curve is there and read its box, but the drawn shape of the ground line
+  between columns is not printed data, and the nearest-column rule means no interpolation anyway.
+- It knows only the sheets and documents given to it; reference drawings mentioned on a sheet are not known unless
+  uploaded too.
+
+**Test set:** includes long-tail questions (notes, legend items, small labels, remarks) scored separately from the
+structured items, so coverage is measured, not assumed.
+
 ## Situation awareness
 
 The model must recognise **what it has been given and what is being asked**, and choose its behaviour —
@@ -109,8 +154,10 @@ read, not from model reasoning.
 
 0. **Data and decisions**: new L-section PDFs (text layer, layout, annotation); held-back test sheets; hardware answers.
 1. **Store and tools** (code only): SQLite store of everything on every sheet; the six tools; tested on vector PDFs.
-2. **Whole-sheet reader, everything on the sheet**: add curves, transition points (ST/TTP1, TC/CTP1, CT/CTP2, TS/TTP2),
-   gradients, grade points, notes, km posts to the reader. Layout detection is done (layout.py).
+2. **Whole-sheet reader, everything on the sheet** (see "Full coverage"): layer 1 full sweep (all band columns, curves,
+   transition points, gradients, grade points, km posts, notes, legend, abbreviations, panel sections) and layer 2
+   long tail (whole-sheet text index + `look`). Connect the vector-PDF route (`annotate.py`) to the same store.
+   Layout detection is done (layout.py).
 3. **Dataset v4**
    - Vision: everything on the sheet, in Qwen3.5's image and box format; low-DPI copies (rendered at 60-120 dpi and
      scaled up).
