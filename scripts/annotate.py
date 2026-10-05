@@ -108,7 +108,7 @@ def num(s):
 
 # ---------------------------------------------------------------- bridges
 
-CALLOUT_STOP = r"C/L OF|TBM|Near Railway|(ST|TS|SC|CS|TC|CT) AT CH|KM"
+CALLOUT_STOP = r"C/L OF|TBM|Near Railway|(ST|TS|SC|CS|TC|CT|TP1|TP2|J1|J2) AT CH|KM"
 
 def norm_id(bid):
     """'LC 261' -> 'LC-261', so callout and level block agree however the sheet spaces it."""
@@ -459,10 +459,13 @@ def extras(lines, band, regions):
     for l in lines:
         t, b = l["text"], l["bbox"]
         cx = (b[0] + b[2]) / 2
-        m = re.match(r"^(TS|SC|CS|ST|TC|CT) AT CH:\s*([\d+.]+)$", t)
+        m = re.match(r"^(TS|SC|CS|ST|TC|CT|TP1|TP2|J1|J2) AT CH:\s*([\d+.]+)$", t)
         if m:
-            out["transition_points"].append({"type": m.group(1), "meaning": TRANSITION[m.group(1)],
-                                             "also_called": TRANSITION_ALSO[m.group(1)],
+            # Some drawing sets print TP1 / J1 / J2 / TP2 for the same four points (their abbreviation tables:
+            # TP1 = Straight to Transition Point, J1 = Transition to Curve, J2 = Curve to Transition, TP2 = Transition to Straight)
+            typ = {"TP1": "ST", "J1": "TC", "J2": "CT", "TP2": "TS"}.get(m.group(1), m.group(1))
+            out["transition_points"].append({"type": typ, "printed_as": m.group(1), "meaning": TRANSITION[typ],
+                                             "also_called": TRANSITION_ALSO[typ],
                                              "chainage_m": km_to_m(m.group(2)), "view": "plan" if b[3] <= plan_bottom else "L-section",
                                              "text": t, "bbox": b})
             continue
@@ -755,19 +758,35 @@ def notes(lines):
 
 def abbreviations(lines):
     region = [PANEL[0], 1150, PANEL[1], 1365]
-    out = {}
-    for row in by_rows(text_in(lines, region), tol=3):
+    items = text_in(lines, region)
+    out, where = {}, {}                      # where: key -> (x0, y0) of its "= meaning" text, for wrapped lines
+    used = set()
+    for row in by_rows(items, tol=3):
         pending = None
         for l in row:
             t = l["text"]
             if "=" in t and not t.startswith("="):
                 k, _, v = t.partition("=")
                 out[k.strip()] = v.strip()
+                where[k.strip()] = (l["bbox"][0], l["bbox"][1])
+                used.add(id(l))
             elif t.startswith("=") and pending:
-                out[pending] = t[1:].strip()
+                out[pending[0]] = t[1:].strip()
+                where[pending[0]] = (l["bbox"][0], l["bbox"][1])
+                used.update({id(l), id(pending[1])})
                 pending = None
             else:
-                pending = t
+                pending = (t, l)
+    # A meaning that wraps continues on the next line in the same column ("= Point of Vertical" / "Insertion").
+    for l in sorted(items, key=lambda l: l["bbox"][1]):
+        if id(l) in used or "=" in l["text"] or l["text"].strip().upper() == "ABBREVIATIONS":
+            continue
+        cands = [(k, xy) for k, xy in where.items() if abs(l["bbox"][0] - xy[0]) < 25 and 6 < l["bbox"][1] - xy[1] < 20]
+        if cands:
+            k, xy = min(cands, key=lambda c: l["bbox"][1] - c[1][1])
+            out[k] = f"{out[k]} {l['text'].strip()}"
+            where[k] = (xy[0], l["bbox"][1])
+            used.add(id(l))
     return out
 
 

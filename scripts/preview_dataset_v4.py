@@ -42,33 +42,76 @@ def answer_html(ans):
             f'<div class="lbl">Final answer</div><pre class="ans">{html.escape(m.group(2).strip())}</pre>')
 
 
-def section(title, files, intro):
+def load(files):
     rows = []
     for f in files:
-        rows += [json.loads(l) for l in open(DS / f, encoding="utf-8")]
+        if (DS / f).exists():
+            rows += [json.loads(l) for l in open(DS / f, encoding="utf-8")]
+    return rows
+
+
+def dialogue_html(c):
+    out = []
+    for m in c["messages"][1:]:
+        if m["role"] == "user":
+            out.append(f"<div class='u'><b>User</b> {html.escape(m['content'])}</div>")
+        elif m["role"] == "tool":
+            out.append(f"<div class='t'><b>Tool result ({html.escape(m['name'])})</b><pre>{html.escape(m['content'][:900])}</pre></div>")
+        else:
+            if m.get("reasoning"):
+                out.append(f"<div class='think'><div class='lbl'>Thinking</div><pre>{html.escape(m['reasoning'])}</pre></div>")
+            for tc in m.get("tool_calls", []):
+                f = tc["function"]
+                out.append(f"<div class='c'><b>Tool call</b> <code>{html.escape(f['name'])}({html.escape(json.dumps(f['arguments'], ensure_ascii=False))})</code></div>")
+            if m.get("content"):
+                out.append(f"<div class='a'><b>Assistant</b> {html.escape(m['content'])}</div>")
+    return "".join(out)
+
+
+def agent_section(title, files, intro):
+    rows = load(files)
+    if not rows:
+        return ""
     by = defaultdict(list)
     for r in rows:
         by[r["task"]].append(r)
+    out = [f"<h2>{title}</h2><p class='intro'>{intro}</p>", counts_table(rows)]
+    for t in sorted(by):
+        out.append(f"<h3>{t}</h3>")
+        for r in rng.sample(by[t], min(PER_TASK, len(by[t]))):
+            out.append(f"<div class='card'><div class='meta'>{html.escape(r['id'])} &middot; sheet {html.escape(r['sheet'])} &middot; "
+                       f"{r['split']} &middot; thinking {'on' if r['thinking'] else 'off'}</div>{dialogue_html(r)}</div>")
+    return "\n".join(out)
+
+
+def counts_table(rows):
     counts = defaultdict(lambda: defaultdict(int))
+    splits = sorted({r["split"] for r in rows}, key=lambda s: ["train", "val", "test", "test_lowdpi"].index(s) if s in ("train", "val", "test", "test_lowdpi") else 9)
     for r in rows:
         counts[r["task"]][r["split"]] += 1
-    out = [f"<h2>{title}</h2><p class='intro'>{intro}</p>",
-           "<table class='counts'><tr><th>Task</th><th>Train</th><th>Val</th><th>Test</th></tr>"]
+    out = ["<table class='counts'><tr><th>Task</th>" + "".join(f"<th>{s}</th>" for s in splits) + "</tr>"]
     for t in sorted(counts):
-        c = counts[t]
-        out.append(f"<tr><td>{t}</td><td>{c['train']}</td><td>{c['val']}</td><td>{c['test']}</td></tr>")
-    tot = defaultdict(int)
-    for t in counts:
-        for s, n in counts[t].items():
-            tot[s] += n
-    out.append(f"<tr class='tot'><td>Total</td><td>{tot['train']}</td><td>{tot['val']}</td><td>{tot['test']}</td></tr></table>")
+        out.append(f"<tr><td>{t}</td>" + "".join(f"<td>{counts[t][s]}</td>" for s in splits) + "</tr>")
+    out.append("<tr class='tot'><td>Total</td>" + "".join(f"<td>{sum(counts[t][s] for t in counts)}</td>" for s in splits) + "</tr></table>")
+    return "".join(out)
+
+
+def section(title, files, intro):
+    rows = load(files)
+    if not rows:
+        return ""
+    by = defaultdict(list)
+    for r in rows:
+        by[r["task"]].append(r)
+    out = [f"<h2>{title}</h2><p class='intro'>{intro}</p>", counts_table(rows)]
     for t in sorted(by):
         out.append(f"<h3>{t}</h3>")
         for r in rng.sample(by[t], min(PER_TASK, len(by[t]))):
             user, asst = r["messages"][0], r["messages"][1]
             imgs = r.get("images") or [r["image"]]
             out.append("<div class='card'>"
-                       f"<div class='meta'>{html.escape(r['id'])} &middot; sheet {html.escape(r['sheet'])} &middot; {r['split']}</div>"
+                       f"<div class='meta'>{html.escape(r['id'])} &middot; sheet {html.escape(r['sheet'])} &middot; {r['split']}"
+                       + (f" &middot; {html.escape(r['aug'])}" if r.get("aug") else "") + "</div>"
                        f"<div class='imgs'>{''.join(img_tag(i) for i in imgs)}</div>"
                        f"<div class='lbl'>Question</div><pre class='q'>{html.escape(text_of(user))}</pre>"
                        f"{answer_html(text_of(asst))}</div>")
@@ -88,6 +131,16 @@ def main():
         section("Reasoning dataset (chain of thought)", ["reasoning_train.jsonl", "reasoning_val.jsonl", "reasoning_test.jsonl"],
                 "Questions that combine, check or decide: numbered steps inside &lt;think&gt;, then the final answer. "
                 "Some rows use two images (e.g. a bridge callout and the data bands)."),
+        section("Generic table reading (layouts not seen in training)", ["generic_train.jsonl", "generic_val.jsonl", "generic_test.jsonl"],
+                "Band tables re-assembled from real crops: rows re-ordered or dropped, some relabelled with a synonym, sometimes "
+                "every second column only (40 m). Answers name rows by their printed label."),
+        section("Augmented training rows (low DPI and 200 dpi)", ["aug_train.jsonl", "aug_reasoning_train.jsonl"],
+                "Low-DPI copies (60-120 dpi scaled back up, some JPEG-compressed, same answers) and true 200 dpi crops rendered from the PDFs."),
+        section("Low-DPI test set", ["test_lowdpi.jsonl"],
+                "Test rows at 75 and 100 dpi, to measure reading accuracy at low DPI."),
+        agent_section("Agent conversations (tool use)", ["agent_train.jsonl", "agent_val.jsonl", "agent_test.jsonl"],
+                      "Multi-turn conversations with tool calls (docs/tools_v4.json); every tool result is computed from the annotations. "
+                      "Thinking appears only where the reasoning rules call for it."),
     ]
     page = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>v4 dataset preview</title><style>
@@ -101,6 +154,8 @@ h1{font-size:26px}h2{margin-top:40px;border-bottom:2px solid var(--accent);paddi
 .lbl{font-size:12px;font-weight:600;color:var(--muted);margin-top:8px;text-transform:uppercase;letter-spacing:.04em}
 pre{white-space:pre-wrap;word-break:break-word;margin:4px 0;font:13px/1.45 ui-monospace,Consolas,monospace}
 .think{background:var(--think);border-radius:6px;padding:6px 10px;margin-top:8px}
+.u,.a,.c,.t{margin:6px 0;padding:6px 10px;border-radius:6px}.u{background:var(--think)}.a{border-left:3px solid var(--accent)}
+.c{font-size:13px}.t{font-size:12px;color:var(--muted)}code{font:12.5px ui-monospace,Consolas,monospace;word-break:break-word}
 table.counts{border-collapse:collapse;margin:8px 0;font-size:13px}table.counts td,table.counts th{border:1px solid var(--line);padding:3px 10px;text-align:right}
 table.counts td:first-child,table.counts th:first-child{text-align:left}tr.tot td{font-weight:700}
 </style></head><body>""" + "\n".join(body) + "</body></html>"
