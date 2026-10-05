@@ -1,7 +1,7 @@
 # v4 plan: an L-section assistant that works like an engineer's assistant
 
 Decided: **fully in-house (option A)**. No drawings, extracted values or project-specific questions go to outside
-services; the only outside access is a controlled internet fallback for general knowledge (see "Knowledge beyond the drawing"). One fine-tuned
+services; the only outside access is a controlled internet fallback for general knowledge (automatic, through a code-enforced leak gate; see "Knowledge beyond the drawing"). One fine-tuned
 open model is both the brain (conversation, planning, tool calls) and the eyes (reading drawings), with local tools.
 
 ## Model — decided: accuracy over speed
@@ -111,7 +111,7 @@ Expected time per scanned sheet in accuracy mode: roughly 5-15 minutes (to be me
 | `calc(expression)` | Exact arithmetic (the model never does arithmetic in its head) |
 | `check(rule, ...)` | FL >= MIN FL, ruling gradient, track centres >= 4.725 m, free board, band arithmetic, curve formulas |
 | `search_library(query)` | Searches the local reference library (codes, manuals, standards, abbreviation lists) |
-| `web_search(query)` | Internet fallback for general knowledge only: project details stripped, user approves the search, answer labelled |
+| `web_search(term)` | Automatic internet lookup of a new term's general meaning; the query is built and leak-checked by code, never by the model; answer labelled |
 
 Memory: the store keeps every sheet read (questions across the whole line); the conversation keeps follow-ups
 ("its HFL?", "and 561?").
@@ -188,7 +188,7 @@ rows the model has never seen (e.g. "BANK HEIGHT") are skipped today. v4 closes 
 7. **Test set:** held-out layouts the model never saw (synthetic variants and any real new-layout sheets), scored
    separately: rows identified, values read, blocks read, correct "new layout" warnings.
 
-## Knowledge beyond the drawing (option 3: local library first, internet as a controlled fallback)
+## Knowledge beyond the drawing (local library first, then automatic internet lookup through a leak gate)
 
 Some questions need knowledge that is not on any sheet ("what does CTP mean?", "minimum track centre per IRS?",
 "free board required by the code?").
@@ -196,28 +196,40 @@ Some questions need knowledge that is not on any sheet ("what does CTP mean?", "
 1. **Local reference library (first).** Documents supplied by the team (IRS codes and manuals, RDSO standards,
    Schedule of Dimensions, organisation abbreviation lists, specifications) are indexed in the store and searched
    locally with the new tool `search_library(query)`; answers cite document and section.
-2. **Internet (fallback only), with the tool `web_search(query)`, under these controls:**
-   - only for general knowledge, and only when the library has no answer;
-   - project details are stripped from the search text before anything leaves (bridge numbers, chainages, levels,
-     sheet and drawing numbers, names, locations);
-   - the user sees the exact search text and approves it before it is sent;
-   - the answer is labelled "from the internet: <source>" and kept separate from drawing data;
-   - every search is logged; an administrator can switch internet search off entirely.
+2. **Internet — automatic, no approval (decided), leak-proof by construction.** When something new is found (an
+   unknown term, abbreviation or label) or a question needs general knowledge the sheet and library do not have, the
+   assistant searches the internet by itself. Because no person checks each search, **the protection is enforced by
+   code, not left to the model:**
+   - **The model never writes the search text.** It can only hand over a *term* (e.g. "SFL"). Code builds the query
+     from a fixed template: the term plus words from a fixed allowlist ("railway", "longitudinal section", "civil
+     engineering", "abbreviation", "meaning") — e.g. `"SFL" railway longitudinal section abbreviation meaning`.
+   - **The term itself must pass a leak gate (code) before anything leaves:** short (at most 4 words / 30 characters);
+     no numbers that look like chainages, levels, coordinates, dates, bridge / sheet / drawing numbers; and not on the
+     **denylist built from the store** — every identifying string on the sheets: drawing and sheet numbers, project
+     and client names, station names and codes, place names, people's names (issue record, officers), TBM
+     descriptions. A term that fails is **not searched**; the answer says the meaning could not be looked up safely.
+   - **Only the query text goes out:** no images, no sheet text, no extracted values, no file names, no cookies or
+     account; plain search requests through one module, results fetched read-only.
+   - **Each term is searched once** and the result cached locally; later questions reuse the cache.
+   - Every search is logged (term, query, time, source used); an administrator can switch internet search off.
+   - Residual risk, stated honestly: a printed term can itself hint at the project (e.g. an unusual local
+     abbreviation). The denylist removes the identifying strings known from the sheets; anything else that is short,
+     general and number-free is treated as safe to search.
 3. **Never sent out:** drawings, extracted values, sheet text, or questions containing project details.
-   **Never automatic:** nothing is searched without the user's approval, and nothing at all is searched while a sheet
-   is being read.
    **Lookup order for anything new or unclear** (Ankur's rule): (1) the sheet's own right-hand panel — notes, legend,
-   abbreviations; (2) the local library; (3) the internet, with approval; (4) ask the user. On a new layout, unfamiliar
-   terms are collected during reading and shown once ("3 terms not recognised: SFL, BH, FW — FW explained by the
-   sheet's abbreviations; look up the other two? Searches will be: ..."), and the user approves all, some or none.
+   abbreviations; (2) the local library; (3) the internet, automatically, through the leak gate; (4) if still
+   unclear, ask the user. On a new layout, unfamiliar terms found while reading are looked up the same way, after the
+   panel and library, without interrupting the reading.
    A web result only explains a term's meaning; it never changes a value read from the drawing or which row a value
    belongs to — if the meaning stays uncertain, the row keeps its printed label.
 4. **Answers say where each part comes from:** the drawing (sheet, chainage, column), the library (document, section)
    or the internet (source) — never blended without attribution. Values always come from the drawing; general rules
    from the library or the web.
-5. **Training:** conversations where the model picks the right source (store / `look` / library / web), writes a
-   clean general search (no project details), asks for approval, and labels the answer. **Test set:** knowledge
-   questions scored for correct source, correct labelling, and zero project details in any web query (leak check).
+5. **Training:** conversations where the model picks the right source (store / `look` / library / web), hands
+   `web_search` only a bare general term (never sentences or project details), and labels the answer.
+   **Test set:** knowledge questions scored for correct source and labelling; **leak test** of the gate itself — every
+   identifying string from the test sheets (and synthetic ones mixed into terms) must be blocked, with zero project
+   details in any query that leaves.
 
 ## Multi-sheet PDFs
 
@@ -357,7 +369,7 @@ read, not from model reasoning.
      reasoning rules say so (see "Reasoning rules").
    - Unseen layouts: generic table reading and generic text-block reading on layout variants generated from our
      sheets (see "L-section layouts the model was not trained on").
-   - Knowledge sources: choosing store / `look` / library / web, clean general web queries, approval, labelling.
+   - Knowledge sources: choosing store / `look` / library / web, bare general terms for `web_search`, labelling.
    - **Agent behaviour:** code-generated conversations (question -> tool calls -> real tool results -> reasoning ->
      answer), covering every situation in the tables above, including multi-turn, clarifying, "not on the sheet",
      failed checks, unknown layouts and non-L-section inputs.
