@@ -128,8 +128,8 @@ def parse_callout(text):
     if bridge_id == "ROB":                      # an ROB printed without a number: name it by its chainage
         bridge_id = f"ROB at CH {num(cm.group(1))}" if cm else None
     on_line = None
-    if rest.startswith("UP "):                  # existing structure on the UP line ("UP RCC SLAB - ...")
-        on_line, rest = "existing UP line", rest[3:]
+    if rest.startswith(("UP ", "DN ")):          # existing structure on the UP / DN line ("DN RCC SLAB - ...")
+        on_line, rest = f"existing {rest[:2]} line", rest[3:]
     # Callouts that need no extension
     no_ext = None
     if "EXISTING STRUCTURE IS SUFFICIENT" in rest:
@@ -220,7 +220,7 @@ def bridges(lines):
 
     # Level blocks on the L-section: "EXG. BR. NO. 516" followed by EXG FL, MIN FL REQ, FL, B.L, HFL, FB.
     for ln in lines:
-        m = re.match(r"^EXG\.?\s*(?:BR\.?\s*NO\.?\s*(?P<no>LC[ -]?\d+\w*|\S+)?(?:\s+UP)?|(?P<rob>ROB-\d+)|(?P<lc>LC[ -]?\d+))$",
+        m = re.match(r"^EXG\.?\s*(?:BR\.?\s*NO\.?\s*(?P<no>LC[ -]?\d+\w*|\S+)?(?:\s+(?:UP|DN))?|(?P<rob>ROB-\d+)|(?P<lc>LC[ -]?\d+))$",
                      ln["text"])
         if not (m and horizontal(ln) and inside(ln["bbox"], lsec_region)):
             continue
@@ -336,18 +336,28 @@ def bands(lines):
                 vals[name] = float(near[2])
                 boxes.append(near[3])
         vals["chainage"] = float(text)
+        # checks_ok: the printed numbers agree with each other (FL - GL = cut/fill, FL - existing FL = difference),
+        # so the column was read correctly and can be used. RL - FL against the sheet's rail-level note (762 mm)
+        # is a check on the drawing itself, kept separately: some 4th-line sheets print 0.764-0.765.
         ok = all(k in vals for k in BAND_ROWS) and (
             abs(vals["prop_fl"] - vals["ground_level"] - vals["cut_fill"]) < 0.0025
-            and abs(vals["prop_fl"] - vals["exg_up_fl"] - vals["fl_difference"]) < 0.0025
-            and abs(vals["prop_rl"] - vals["prop_fl"] - 0.762) < 0.0025)
-        columns.append({"chainage": vals["chainage"], "x": round(cx, 1), "values": vals, "checks_ok": ok,
-                        "bbox": union(boxes)})
+            and abs(vals["prop_fl"] - vals["exg_up_fl"] - vals["fl_difference"]) < 0.0025)
+        col = {"chainage": vals["chainage"], "x": round(cx, 1), "values": vals, "checks_ok": ok, "bbox": union(boxes)}
+        if "prop_rl" in vals and "prop_fl" in vals:
+            col["rl_minus_fl"] = round(vals["prop_rl"] - vals["prop_fl"], 3)
+            col["rail_level_ok"] = abs(col["rl_minus_fl"] - 0.762) < 0.0025
+        columns.append(col)
     # Row labels are centred in the label column, so take every label that starts left of the numbers
     # (the widest ones, such as DIFFERENCE BETWEEN, reach further right than the CUT label).
     labels = [l for l in lines if horizontal(l) and l["bbox"][0] < x_min and l["bbox"][2] < x_min + 40
               and y0 <= l["bbox"][1] <= y1]
+    label_text = " ".join(l["text"] for l in labels).upper()
+    prop = re.search(r"PROP\.?\s*(\w+)\s*LINE", label_text)
+    exg = re.search(r"EXG\.?\s*(\w+)\s*LINE", label_text)
     return {"rows": BAND_ROWS, "row_y": row_y,
             "label_strip": union([l["bbox"] for l in labels] + [[x_min - 5, y0, x_min - 5, y1]]),
+            "lines": {"proposed": f"{prop.group(1)} LINE" if prop else None,
+                      "existing": f"{exg.group(1)} LINE" if exg else None},
             "columns": columns}
 
 
@@ -603,10 +613,17 @@ def right_of(lines, label, dy=5, max_dx=400):
     return lab, (rest + (first["text"] if first else "")).strip() or None
 
 
+PANEL_HEADINGS = ("BRIDGE DETAILS", "LEGENDS:", "LEGEND:", "ABBREVIATIONS", "REFERENCE DRAWINGS")
+
+
 def tbm_table(lines, top):
     rows = []
-    region = [PANEL[0], top, PANEL[1], 875]
+    nxt = [l["bbox"][1] for l in lines if l["text"].strip() in PANEL_HEADINGS and PANEL[0] <= l["bbox"][0] and top < l["bbox"][1] < 875]
+    region = [PANEL[0], top, PANEL[1], min(nxt, default=875)]
     cells = text_in(lines, region)
+    hdr = {c["text"].strip().upper(): c for c in cells if c["text"].strip().upper() in ("CHAINAGE", "EASTING", "NORTHING", "MSL")}
+    if "CHAINAGE" not in hdr and {"EASTING", "NORTHING", "MSL"} <= set(hdr):
+        return tbm_table_by_header(cells, hdr)
     for idl in cells:
         if not re.match(r"^BMT?\d+$", idl["text"]):
             continue
@@ -625,6 +642,84 @@ def tbm_table(lines, top):
     return rows
 
 
+def tbm_table_by_header(cells, hdr):
+    """TBM tables without a chainage column (e.g. "TBM 216 | Easting | Northing | MSL | Description")."""
+    cols = {k: (c["bbox"][0] + c["bbox"][2]) / 2 for k, c in hdr.items()}
+    desc_x = max(c["bbox"][2] for c in hdr.values())
+    rows = []
+    for idl in cells:
+        if not re.match(r"^T?BMT?\s*-?\s*\d+\w*$", idl["text"].strip(), re.I):
+            continue
+        yc = (idl["bbox"][1] + idl["bbox"][3]) / 2
+        row = [c for c in cells if c is not idl and abs((c["bbox"][1] + c["bbox"][3]) / 2 - yc) < 5]
+        vals = {}
+        for k, x in cols.items():
+            near = [c for c in row if num(c["text"]) is not None and abs((c["bbox"][0] + c["bbox"][2]) / 2 - x) < 45]
+            vals[k] = num(near[0]["text"]) if near else None
+        if sum(v is not None for v in vals.values()) < 3:
+            continue
+        desc = sorted((c for c in cells if c["bbox"][0] > desc_x and abs((c["bbox"][1] + c["bbox"][3]) / 2 - yc) < 17),
+                      key=lambda c: c["bbox"][1])
+        rows.append({"tbm_id": idl["text"].strip(), "chainage_m": None, "easting": vals.get("EASTING"),
+                     "northing": vals.get("NORTHING"), "msl_m": vals.get("MSL"),
+                     "description": " ".join(d["text"] for d in desc),
+                     "bbox": union([idl["bbox"], *[c["bbox"] for c in row + desc]])})
+    return rows
+
+
+BRIDGE_TABLE_COLS = ["bridge_id", "chainage_m", "existing_type", "existing_span", "crossing",
+                     "proposed_structure", "category", "proposed_span"]
+
+
+def bridge_table(lines):
+    """The BRIDGE DETAILS table some sheets print in the right panel: one row per bridge with its number,
+    chainage, existing structure and span, what it crosses, and the proposed structure, type and span.
+    Columns are found from where the data sits (the header wording varies and wraps); their order is
+    the printed one: BR. NO. | CHAINAGE | EXG. STRUCTURE | EXG. CONFIGURATION | DESCRIPTION |
+    PROP. STRUCTURE | PROP. TYPE | PROP. CONFIGURATION."""
+    head = next((l for l in lines if l["text"].strip() == "BRIDGE DETAILS" and l["bbox"][0] >= PANEL[0]), None)
+    if not head:
+        return []
+    top = head["bbox"][3]
+    bottom = min([l["bbox"][1] for l in lines if l["text"].strip() in PANEL_HEADINGS and l["bbox"][0] >= PANEL[0]
+                  and l["bbox"][1] > top + 5], default=top + 600)
+    cells = [c for c in text_in(lines, [PANEL[0], top, PANEL[1], bottom])]
+    idre = r"^(\d+[A-Z]?(UP|DN)?|LC[- ]?\d+\w*|LHS|RUB[\w -]*|ROB[- ]?\d*\w*)$"
+    first_x = min((c["bbox"][0] for c in cells if c["text"].strip().startswith("BR")), default=PANEL[0] + 30)
+    anchors = sorted((c for c in cells if re.match(idre, c["text"].strip()) and c["bbox"][0] < first_x + 40),
+                     key=lambda c: c["bbox"][1])
+    if not anchors:
+        return []
+    data_top = anchors[0]["bbox"][1] - 12
+    data = [c for c in cells if c["bbox"][1] >= data_top]
+    # column centres: cluster the x-centres of the cells on the anchor rows
+    xs = sorted((c["bbox"][0] + c["bbox"][2]) / 2 for a in anchors for c in data
+                if abs((c["bbox"][1] + c["bbox"][3]) / 2 - (a["bbox"][1] + a["bbox"][3]) / 2) < 4)
+    cols = []
+    for x in xs:
+        if cols and x - cols[-1][-1] < 22:
+            cols[-1].append(x)
+        else:
+            cols.append([x])
+    centres = [sum(c) / len(c) for c in cols if len(c) >= (1 if len(anchors) <= 3 else max(2, len(anchors) // 3))]
+    if len(centres) != len(BRIDGE_TABLE_COLS):
+        return []
+    rows = []
+    for i, a in enumerate(anchors):
+        y0 = a["bbox"][1] - 12
+        y1 = anchors[i + 1]["bbox"][1] - 12 if i + 1 < len(anchors) else bottom
+        parts = {k: [] for k in BRIDGE_TABLE_COLS}
+        for c in sorted((c for c in data if y0 <= (c["bbox"][1] + c["bbox"][3]) / 2 < y1), key=lambda c: c["bbox"][1]):
+            cx = (c["bbox"][0] + c["bbox"][2]) / 2
+            k = BRIDGE_TABLE_COLS[min(range(len(centres)), key=lambda j: abs(centres[j] - cx))]
+            parts[k].append(c)
+        row = {k: " ".join(c["text"].strip() for c in v) or None for k, v in parts.items()}
+        row["chainage_m"] = num(row["chainage_m"])
+        row["bbox"] = union([c["bbox"] for v in parts.values() for c in v])
+        rows.append(row)
+    return rows
+
+
 def tbm_markers(lines):
     out = []
     for ln in lines:
@@ -640,7 +735,9 @@ def tbm_markers(lines):
 
 
 def notes(lines):
-    region = [PANEL[0], 55, PANEL[1], 470]
+    # The notes run from the top of the panel down to the TBM table's heading.
+    tbm = [l["bbox"][1] for l in lines if l["text"].strip() == "TBM DETAILS" and l["bbox"][0] >= PANEL[0]]
+    region = [PANEL[0], 55, PANEL[1], min(tbm, default=470) - 2]
     body = text_in(lines, region)
     out, cur = [], None
     for row in by_rows(body):
@@ -648,7 +745,8 @@ def notes(lines):
         if re.match(r"^\d+\.$", first):
             cur = {"no": int(first[:-1]), "text": " ".join(l["text"] for l in row[1:])}
             out.append(cur)
-        elif cur and row[0]["bbox"][0] > 3240:
+        elif cur and first.strip() not in ("NOTE:", "NOTES:"):
+            # a wrapped line of the current note (indented under its text, or flush left as on some sheets)
             cur["text"] += " " + " ".join(l["text"] for l in row)
     for n in out:
         n["text"] = re.sub(r"\s+", " ", n["text"]).strip()
@@ -773,10 +871,23 @@ def annotate_page(page, pdf_name, i):
         "bands": bands(lines),
         "tbm_benchmarks": tbm_table(lines, tbm_hdr["bbox"][3] if tbm_hdr else 500),
         "tbm_markers": tbm_markers(lines),
+        "bridge_table": bridge_table(lines),
         "notes": notes(lines),
         "abbreviations": abbreviations(lines),
         "legend": legend(lines),
     }
+    bd = ann["bands"]
+    if (not info.get("chainage_from") or not info.get("chainage_to")) and isinstance(bd, dict) and bd.get("columns"):
+        chs = sorted(c["chainage"] for c in bd["columns"])
+        fmt = lambda m: f"{int(m // 1000)}+{m % 1000:07.3f}"      # noqa: E731
+        info["chainage_from"], info["chainage_to"] = fmt(chs[0]), fmt(chs[-1])
+        info["chainage_source"] = "data bands (the title block does not give the range" + \
+            (", it prints '####')" if any(l["text"].strip() == "####" for l in lines) else ")")
+        lo, hi = chs[0], chs[-1]
+        for b in bridge_list:
+            ch = b.get("chainage_m")
+            b["belongs_to"] = (None if ch is None else "this sheet" if lo <= ch <= hi else
+                               "previous sheet" if ch < lo else "next sheet")
     ann.update(extras(lines, ann["bands"], ann["regions"]))
     # Every text item on the sheet, as printed: the base for "read anything" questions and the coverage check.
     ann["all_text"] = [{"text": l["text"], "bbox": l["bbox"], "dir": [round(d, 3) for d in l["dir"]]} for l in lines]

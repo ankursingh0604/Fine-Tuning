@@ -37,6 +37,41 @@ rng = random.Random(SEED)
 
 # ---------------------------------------------------------------- formatting
 
+def rail_step(col):
+    """RL - FL against the sheet's rail-level note: agrees on the 3rd-line sheets; some 4th-line sheets print 0.764-0.765."""
+    v = col["values"]
+    d = v["prop_rl"] - v["prop_fl"]
+    if col.get("rail_level_ok", True):
+        return f"RL - FL = {f3(d)}, the 0.762 m of note {D.SHEET['rail_note']}", True
+    return f"RL - FL = {f3(d)}, not the 0.762 m that note {D.SHEET['rail_note']} requires: a CHECK on the drawing", False
+
+
+ROW_WORDS = {"cut_fill": "cut(-)/fill(+)", "fl_difference": "FL difference", "prop_rl": "proposed RL", "prop_fl": "proposed FL",
+             "track_distance": "track distance", "exg_up_fl": "existing {e} FL", "ground_level": "ground level"}
+
+
+def interp_steps(c1, c2, ch, keys):
+    """Working for y - y1 = (y2 - y1)/(x2 - x1) * (x - x1), one line per band row; returns (steps, y)."""
+    y, t = D.interpolate(c1, c2, ch)
+    x1, x2 = c1["chainage"], c2["chainage"]
+    if c1 is c2:
+        steps = [f"CH {g(ch)} is exactly on the printed column {ch_txt(x1)}, so y = y1 for every row."]
+    else:
+        steps = [f"Interpolate between x1 = {ch_txt(x1)} and x2 = {ch_txt(x2)}: y = y1 + (y2 - y1) / (x2 - x1) * (x - x1), "
+                 f"with (x - x1) / (x2 - x1) = ({g(ch)} - {ch_txt(x1)}) / ({ch_txt(x2)} - {ch_txt(x1)}) = {t:.4f}."]
+    for k in keys:
+        name = ROW_WORDS[k].format(e=D.SHEET["exg"])
+        a, b = c1["values"][k], c2["values"][k]
+        steps.append(f"{name}: y1 = {f3(a)}, y2 = {f3(b)} -> y = {f3(a)} + ({f3(b)} - {f3(a)}) x {t:.4f} = {f3(y[k])}."
+                     if c1 is not c2 else f"{name}: y = {f3(a)}.")
+    return steps, y
+
+
+def ruling_text():
+    n = D.SHEET["ruling"]
+    return f"Note {n[1]} gives a ruling gradient of 1 in {n[0]}" if n else None
+
+
 def f3(v):
     return f"{v:.3f}"
 
@@ -147,6 +182,41 @@ def r_bridge_bands(page, ann, sheet, blocked, blocked_ch):
         (p1, s1), origin, size = crop_around(page, core, f"s{sheet}_rbr{b['bridge_id']}", 1008)
         if not fully_in(lv["bbox"], origin, size):
             continue
+        if D.SHEET.get("interpolate"):
+            br = D.bracket(cols, ch)
+            if not br or br[0]["chainage"] in blocked_ch or br[1]["chainage"] in blocked_ch or \
+                    (br[1] is not br[0] and abs(br[1]["chainage"] - br[0]["chainage"] - 20) > 0.5):
+                continue
+            c1, c2 = br
+            i1 = cols.index(c1)
+            win = band_window(cols, i1)
+            if c2 not in win:
+                win = band_window(cols, i1 + 1)
+            p2, s2 = band_image(page, ann, win, f"s{sheet}_rbands_{c1['chainage']:.0f}")
+            fl, req = lv["proposed_formation_level"], lv.get("min_formation_level_required")
+            steps = [f"Image 1, the L-section callout: {name_of(b)} has its centre line at CH {g(ch)}. "
+                     f"Its level block gives FL {fl}" + (f" and MIN FL REQ. {req}" if req is not None else "") + "."]
+            steps.append(f"Image 2, the data bands: CH {g(ch)} lies " + (f"on the column {ch_txt(c1['chainage'])}." if c1 is c2 else
+                         f"between the columns x1 = {ch_txt(c1['chainage'])} and x2 = {ch_txt(c2['chainage'])}."))
+            ws, y = interp_steps(c1, c2, ch, ["ground_level", "prop_fl", "cut_fill", "prop_rl"])
+            steps += ws
+            steps.append(f"Check: FL - GL = {f3(y['prop_fl'])} - {f3(y['ground_level'])} = {f3(y['prop_fl'] - y['ground_level'])}, "
+                         f"matching the interpolated cut/fill {f3(y['cut_fill'])}.")
+            cut = y["cut_fill"]
+            steps.append(f"The cut/fill value is {'positive, so the formation is on fill (embankment)' if cut > 0 else 'negative, so the formation is in cutting' if cut < 0 else 'zero, so the formation is at ground level'}.")
+            verdict = ""
+            if req is not None:
+                diff = round(fl - req, 3)
+                steps.append(f"FL - MIN FL REQ. = {fl} - {req} = {diff:+.3f} m, so the FL is {'at or above' if diff >= 0 else 'below'} the minimum required.")
+                verdict = (f" {flag(b)}" if flag(b) else f" Its FL {fl} is {diff:.3f} m above the required {req}.")
+            final = (f"At {name_of(b)} (CH {g(ch)}), interpolated between CH {ch_txt(c1['chainage'])} and {ch_txt(c2['chainage'])}: "
+                     f"ground level y = {f3(y['ground_level'])} m, proposed FL y = {f3(y['prop_fl'])} m, "
+                     f"{'fill' if cut > 0 else 'cut'} y = {abs(cut):.3f} m, proposed RL y = {f3(y['prop_rl'])} m." + verdict)
+            q = rng.choice(["What is the ground level and the cut or fill at {n}, and is its formation level high enough?",
+                            "Using the callout and the data bands, give the ground level, cut/fill and FL check for {n}.",
+                            "Is {n} on fill or in cutting, by how much, and does its FL meet the minimum required?"]).format(n=name_of(b))
+            rows.append(finish(row(sheet, "reason_bridge_bands", [(p1, s1), (p2, s2)], q), answer(steps, final)))
+            continue
         win = band_window(cols, idx)
         p2, s2 = band_image(page, ann, win, f"s{sheet}_rbands_{near['chainage']:.0f}")
         v, dist = near["values"], abs(near["chainage"] - ch)
@@ -162,7 +232,7 @@ def r_bridge_bands(page, ann, sheet, blocked, blocked_ch):
         steps.append(f"Column {ch_txt(near['chainage'])} reads: ground level {f3(v['ground_level'])}, proposed FL {f3(v['prop_fl'])}, "
                      f"cut(-)/fill(+) {f3(cut)}, proposed RL {f3(v['prop_rl'])}.")
         steps.append(f"Check: FL - GL = {f3(v['prop_fl'])} - {f3(v['ground_level'])} = {f3(v['prop_fl'] - v['ground_level'])}, "
-                     f"matching the cut/fill row; RL - FL = {f3(v['prop_rl'] - v['prop_fl'])}, the 0.762 m of note 5.")
+                     f"matching the cut/fill row; {rail_step(near)[0]}.")
         steps.append(f"The cut/fill value is {'positive, so the formation is on fill (embankment)' if cut > 0 else 'negative, so the formation is in cutting' if cut < 0 else 'zero, so the formation is at ground level'}.")
         verdict = ""
         if req is not None:
@@ -213,7 +283,7 @@ def r_bands(page, ann, sheet, blocked_ch, n_each=4):
     cols = [c for c in ann["bands"]["columns"] if c["checks_ok"] and c["chainage"] not in blocked_ch]
     if len(cols) < 20:
         return rows
-    names = {"ground_level": "ground level", "cut_fill": "fill (or cut)", "track_distance": "track distance to the existing UP line",
+    names = {"ground_level": "ground level", "cut_fill": "fill (or cut)", "track_distance": f"track distance to the existing {D.SHEET['exg']}",
              "prop_fl": "proposed FL"}
     for k in range(n_each):
         # cut/fill at an arbitrary chainage between columns
@@ -233,6 +303,27 @@ def r_bands(page, ann, sheet, blocked_ch, n_each=4):
                                rng.choice(["Is the formation in cut or fill at CH {c}, and by how much?",
                                            "How much cut or fill is there at chainage {c}?"]).format(c=f"{g(ch)}")),
                            answer(steps, final)))
+        if D.SHEET.get("interpolate"):
+            rows.pop()
+            br = D.bracket(cols, ch)
+            if br and not (br[1] is not br[0] and abs(br[1]["chainage"] - br[0]["chainage"] - 20) > 0.5):
+                c1, c2 = br
+                i1 = cols.index(c1)
+                iw = band_window(cols, i1)
+                if c2 not in iw:
+                    iw = band_window(cols, i1 + 1)
+                ip, isz = band_image(page, ann, iw, f"s{sheet}_rbqi{k}_{c1['chainage']:.0f}")
+                ws, y = interp_steps(c1, c2, ch, ["cut_fill", "prop_fl", "ground_level"])
+                isteps = [f"The crop shows data-band columns from {ch_txt(iw[0]['chainage'])} to {ch_txt(iw[-1]['chainage'])}, one every 20 m.",
+                          f"CH {g(ch)} lies between the columns x1 = {ch_txt(c1['chainage'])} and x2 = {ch_txt(c2['chainage'])}."] + ws +                          [f"Check: FL - GL = {f3(y['prop_fl'])} - {f3(y['ground_level'])} = {f3(y['prop_fl'] - y['ground_level'])}, "
+                          f"matching the interpolated cut/fill (minus is cut, plus is fill)."]
+                cf = y["cut_fill"]
+                ifinal = (f"At CH {g(ch)} (interpolated between {ch_txt(c1['chainage'])} and {ch_txt(c2['chainage'])}) the formation is "
+                          f"{'on fill of' if cf > 0 else 'in cut of' if cf < 0 else 'at ground level,'} y = {abs(cf):.3f} m.")
+                rows.append(finish(row(sheet, "reason_band_cutfill", [(ip, isz)],
+                                       rng.choice(["Is the formation in cut or fill at CH {c}, and by how much?",
+                                                   "How much cut or fill is there at chainage {c}?"]).format(c=f"{g(ch)}")),
+                                   answer(isteps, ifinal)))
         # extreme over the crop
         key = rng.choice(list(names))
         want = rng.choice(["highest", "lowest"])
@@ -248,14 +339,20 @@ def r_bands(page, ann, sheet, blocked_ch, n_each=4):
         # consistency of one column
         c = rng.choice(win)
         v = c["values"]
+        e, rn, rail_ok = D.SHEET["exg"], D.SHEET["rail_note"], c.get("rail_level_ok", True)
         steps = [f"Column {ch_txt(c['chainage'])} reads: cut/fill {f3(v['cut_fill'])}, FL difference {f3(v['fl_difference'])}, RL {f3(v['prop_rl'])}, "
-                 f"FL {f3(v['prop_fl'])}, existing UP line FL {f3(v['exg_up_fl'])}, ground level {f3(v['ground_level'])}.",
-                 f"RL - FL = {f3(v['prop_rl'])} - {f3(v['prop_fl'])} = {f3(v['prop_rl'] - v['prop_fl'])}; note 5 puts rail level 762 mm above formation. Agrees.",
+                 f"FL {f3(v['prop_fl'])}, existing {e} FL {f3(v['exg_up_fl'])}, ground level {f3(v['ground_level'])}.",
+                 f"RL - FL = {f3(v['prop_rl'])} - {f3(v['prop_fl'])} = {f3(v['prop_rl'] - v['prop_fl'])}; note {rn} puts rail level 762 mm above formation. "
+                 + ("Agrees." if rail_ok else "Does not agree."),
                  f"FL - GL = {f3(v['prop_fl'])} - {f3(v['ground_level'])} = {f3(v['prop_fl'] - v['ground_level'])}, against cut/fill {f3(v['cut_fill'])}. Agrees.",
-                 f"FL - existing UP line FL = {f3(v['prop_fl'])} - {f3(v['exg_up_fl'])} = {f3(v['prop_fl'] - v['exg_up_fl'])}, against the difference row {f3(v['fl_difference'])}. Agrees."]
+                 f"FL - existing {e} FL = {f3(v['prop_fl'])} - {f3(v['exg_up_fl'])} = {f3(v['prop_fl'] - v['exg_up_fl'])}, against the difference row {f3(v['fl_difference'])}. Agrees."]
+        final = (f"Yes. At CH {ch_txt(c['chainage'])}, RL - FL = 0.762 (note {rn}), FL - GL equals the cut/fill and FL - existing FL equals the difference row."
+                 if rail_ok else
+                 f"Partly. At CH {ch_txt(c['chainage'])}, FL - GL equals the cut/fill and FL - existing FL equals the difference row, "
+                 f"but RL - FL = {f3(v['prop_rl'] - v['prop_fl'])}, not the 0.762 m that note {rn} requires - CHECK: the rail level on the drawing.")
         rows.append(finish(row(sheet, "reason_band_check", [(p, s)],
                                f"Are the data-band values at CH {ch_txt(c['chainage'])} consistent with each other and with the notes?"),
-                           answer(steps, f"Yes. At CH {ch_txt(c['chainage'])}, RL - FL = 0.762 (note 5), FL - GL equals the cut/fill and FL - existing FL equals the difference row.")))
+                           answer(steps, final)))
     # a chainage that is not in the crop
     for k in range(2):
         idx = rng.randrange(len(cols))
@@ -363,7 +460,7 @@ def r_curve_verify(page, ann, sheet):
 def r_gradient(page, ann, sheet):
     """Two plan grade-point symbols: the gradient between them, checked from the FLs and against the ruling gradient."""
     rows = []
-    for line in ("proposed 3rd line", "existing UP line"):
+    for line in (f"proposed {D.SHEET['prop']}", f"existing {D.SHEET['exg']}"):
         pts = sorted({g["chainage_m"]: g for g in ann["plan_grade_points"] if g["line"] == line}.values(), key=lambda g: g["chainage_m"])
         for a, b in zip(pts, pts[1:]):
             if not (a["gradient_after"] and a["gradient_after"] == b["gradient_before"] and a["fl"] is not None and b["fl"] is not None):
@@ -380,7 +477,7 @@ def r_gradient(page, ann, sheet):
             if not (fully_in(a["bbox"], o1, z1) and fully_in(b["bbox"], o2, z2)):
                 continue
             ch = round(rng.uniform(a["chainage_m"] + 1, b["chainage_m"] - 1), 1)
-            sysname = "proposed chainage" if line.startswith("proposed") else "existing UP line km"
+            sysname = "proposed chainage" if line.startswith("proposed") else f"existing {D.SHEET['exg']} km"
             steps = [f"Image 1 is a grade change point of the {line} ({'red' if line.startswith('proposed') else 'black'} symbol), "
                      f"at {sysname} {a['chainage']}, FL {f3(a['fl'])}. The label right of its bar ({a['label_after']}) is the gradient after it: {a['gradient_after']}.",
                      f"Image 2 is the next grade point, at {b['chainage']}, FL {f3(b['fl'])}. The label left of its bar ({b['label_before']}) is the gradient before it, "
@@ -394,9 +491,14 @@ def r_gradient(page, ann, sheet):
                 steps.append(f"Check from the levels: FL {f3(b['fl'])} - {f3(a['fl'])} = {rise:+.3f} m over {g(dist)} m, i.e. 1 in {n:.0f} "
                              f"{'rising' if rise > 0 else 'falling'}, matching the label.")
                 N = float(m.group(1))
-                steps.append(f"Note 6 gives a ruling gradient of 1 in {RULING}; 1 in {g(N)} is {'flatter' if N >= RULING else 'steeper'} than that.")
                 final = (f"At {g(ch)} the {line} is on a gradient of {a['gradient_after']} (between grade points {a['chainage']} and "
-                         f"{b['chainage']}), {'within' if N >= RULING else 'steeper than'} the ruling gradient of 1 in {RULING}.")
+                         f"{b['chainage']})")
+                if D.SHEET["ruling"]:
+                    RG = D.SHEET["ruling"][0]
+                    steps.append(f"{ruling_text()}; 1 in {g(N)} is {'flatter' if N >= RG else 'steeper'} than that.")
+                    final += f", {'within' if N >= RG else 'steeper than'} the ruling gradient of 1 in {RG}."
+                else:
+                    final += "."
             rows.append(finish(row(sheet, "reason_gradient", [(p1, s1), (p2, s2)],
                                    rng.choice(["What is the gradient of the {l} at {c}? Check it against the levels.",
                                                "Using these two grade points, give the gradient of the {l} at {c} and compare it with the ruling gradient."]).format(l=line, c=f"{g(ch)}")),
@@ -435,9 +537,10 @@ def r_free_board(page, ann, sheet, blocked):
 def r_ruling(page, ann, sheet):
     """Vertical schematic crop: steepest gradient shown, against the ruling gradient (note 6)."""
     rows = []
-    segs = [g for g in ann["gradient_segments"] if g["line"] == "proposed 3rd line" and g["gradient"] and g["mid_chainage_m"]]
-    if not segs:
+    segs = [g for g in ann["gradient_segments"] if g["line"] == f"proposed {D.SHEET['prop']}" and g["gradient"] and g["mid_chainage_m"]]
+    if not segs or not D.SHEET["ruling"]:
         return rows
+    RULING, rnote = D.SHEET["ruling"]
     lab = [l for l in ann["all_text"] if l["text"] == "VERTICAL" and l["bbox"][0] < ann["bands"]["label_strip"][2] + 5]
     if not lab:
         return rows
@@ -462,9 +565,9 @@ def r_ruling(page, ann, sheet):
             return float(m.group(1)) if m else math.inf
         listing = "; ".join(f"{g['gradient_label']} ({g['percent']}) = {g['gradient']}" for g in sorted(inwin, key=lambda g: g["bbox"][0]))
         steep = min(inwin, key=n_of)
-        steps = [f"The proposed 3rd line vertical schematic in the crop shows: {listing}.",
+        steps = [f"The proposed {D.SHEET['prop']} vertical schematic in the crop shows: {listing}.",
                  "The steepest is the one with the smallest N in 1 in N" + ("" if n_of(steep) < math.inf else "; here every stretch is level") + ".",
-                 f"Note 6 gives the ruling gradient of this section as 1 in {RULING}."]
+                 f"Note {rnote} gives the ruling gradient of this section as 1 in {RULING}."]
         if n_of(steep) < math.inf:
             steps.append(f"The steepest here is {steep['gradient']}; {g(n_of(steep))} {'>=' if n_of(steep) >= RULING else '<'} {RULING}, so it is "
                          f"{'flatter than or equal to' if n_of(steep) >= RULING else 'steeper than'} the ruling gradient.")
@@ -473,7 +576,7 @@ def r_ruling(page, ann, sheet):
         else:
             final = f"Every stretch in this crop is level, well within the ruling gradient of 1 in {RULING}."
         rows.append(finish(row(sheet, "reason_ruling_gradient", [(p, s)],
-                               "What is the steepest gradient of the proposed 3rd line in this crop, and is it within the ruling gradient?"),
+                               f"What is the steepest gradient of the proposed {D.SHEET['prop']} in this crop, and is it within the ruling gradient?"),
                            answer(steps, final)))
     return rows
 

@@ -172,10 +172,12 @@ def build_ui(model):
         for b in bridges:
             d = b["data"] or {}
             lv = d.get("levels") or {}
-            col = (b["band"] or {}).get("nearest_column") or {}
+            from sheet_reader import band_values
+            col = band_values(b["band"])
             rows.append([b["bridge_id"], d.get("chainage_m"), " ".join(str(v) for v in (d.get("existing_type"), d.get("existing_span")) if v),
                          d.get("crossing"), d.get("proposal"), lv.get("proposed_formation_level"),
-                         lv.get("min_formation_level_required"), lv.get("high_flood_level"), col.get("chainage"),
+                         lv.get("min_formation_level_required"), lv.get("high_flood_level"),
+                         (f"{(b['band'] or {}).get('x1')} - {(b['band'] or {}).get('x2')}" if col else None),
                          col.get("ground_level"), col.get("cut_fill"), ", ".join(c["severity"] for c in b["checks"]) or "ok"])
         return "\n".join(lines), rows, result["overlay"], sorted(str(f) for f in out.iterdir())
 
@@ -184,12 +186,13 @@ def build_ui(model):
         with gr.Tab("Read a whole sheet"):
             gr.Markdown("Upload an image of a whole Plan & L-Section sheet (50-200 dpi; 150-200 dpi reads most reliably). "
                         "The model reads it in zoomed-in pieces: every bridge callout, its level block, the data-band values at "
-                        "the nearest column, the title block and the TBM table. Expect several minutes per sheet.")
+                        "the bridge chainage (interpolated between the two printed columns either side), the title block and the TBM table. "
+                        "Expect several minutes per sheet.")
             sheet_in = gr.File(label="Sheet image (PNG / JPG)", file_types=["image"], type="filepath")
             read_btn = gr.Button("Read the sheet", variant="primary")
             sheet_summary = gr.Markdown()
             sheet_table = gr.Dataframe(headers=["Bridge", "Chainage", "Existing", "Crossing", "Proposal", "FL", "MIN FL REQ.", "HFL",
-                                                "Band column", "Ground level", "Cut(-)/Fill(+)", "Checks"],
+                                                "Band columns (x1 - x2)", "Ground level (y)", "Cut(-)/Fill(+) (y)", "Checks"],
                                        label="Bridges read from the sheet", wrap=True, interactive=False)
             sheet_overlay = gr.Image(label="Bridges found (red = flagged or failed a check)", type="pil")
             sheet_files = gr.File(label="Results (CSV, JSON, overlay)", file_count="multiple")

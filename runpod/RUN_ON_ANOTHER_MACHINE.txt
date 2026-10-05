@@ -40,14 +40,17 @@ Web page
 Read a WHOLE sheet image (50-200 dpi)
   Command line:
     python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png
-  It finds every bridge callout, reads each callout and level block, reads the data-band values at the
-  nearest column (no interpolation), then the title block and TBM table. It writes a folder
+  It finds every bridge callout, reads each callout and level block, reads the two printed data-band
+  columns either side of the bridge chainage and interpolates every band value between them,
+  y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) (on a printed column, y is that column), then the title block
+  and TBM table. Answers always give y and show x1, x2, y1, y2. It writes a folder
   sheet_100_150dpi_read/ with:
     ..._bridges.csv   one row per bridge (opens in Excel)
     ..._read.json     everything read
     ..._overlay.png   the sheet with the bridges found boxed (red = FLAG/CHECK)
   FL below MIN FL is reported as "FLAG: For bridge X min. FL = .., and FL = ..".
-  About 100 questions to the model per sheet: roughly 5-10 minutes on an RTX 3060.
+  About 120 questions to the model per sheet (two band columns per bridge): roughly 6-12 minutes on an RTX 3060.
+  Readings saved by the earlier version still answer, marked as nearest-column values; add --reread to interpolate.
 
   Ask questions about the sheet (the reading above is saved and reused, so answers come instantly):
     python read_sheet.py --adapter adapter.zip --image test_sheets/sheet_100_150dpi.png -q "ground level at bridge 560"

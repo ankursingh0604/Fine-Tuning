@@ -5,7 +5,7 @@ Understands questions about
   - a value at a bridge    "ground level at bridge 560", "FL of 558", "min FL of 562", "HFL at 565",
                            "cut or fill at 560", "rail level at 560", "span of 554", "proposal for 560"
   - a chainage             "CH 1242662.9", "1242+662.9", "ground level at 1241000"
-                           (band values at the nearest column - never interpolated)
+                           (band values interpolated between the two printed columns either side)
   - flags and checks       "which bridges are flagged", "problems"
   - the sheet              "list bridges", "how many bridges", "title", "drawing number", "scale", "summary"
   - TBMs                   "TBM BM39", "bench marks"
@@ -14,7 +14,7 @@ on the sheet do not add up.
 """
 import re
 
-from sheet_reader import g
+from sheet_reader import band_columns, band_values, g
 
 LEVELS = {"existing_formation_level": "existing FL", "min_formation_level_required": "MIN FL REQ.",
           "proposed_formation_level": "FL", "bed_level": "bed level", "high_flood_level": "HFL", "free_board": "free board"}
@@ -29,12 +29,12 @@ DATA = {"existing_type": "existing type", "existing_span": "existing span", "cro
 # "TRACK DISTANCE BETWEEN PROP. 3RD LINE & EXG. UP LINE"), so whole labels are matched before single words.
 EXG = r"(?:exg\.?|existing|exist\.?)"
 FIELDS = [
-    (r"(?:fl\s*)?diff(?:erence)?(?:\s*between)?(?:[^?]*?" + EXG + r"\s*up\s*(?:line\s*)?fl\b)?", [("band", "fl_difference")]),
-    (r"track\s*(?:distance|centres?|centers?|spacing)(?:\s*between[^?]*?" + EXG + r"\s*up(?:\s*line)?)?|distance\s*between\s*tracks",
+    (r"(?:fl\s*)?diff(?:erence)?(?:\s*between)?(?:[^?]*?" + EXG + r"\s*(?:up|dn|down)\s*(?:line\s*)?fl\b)?", [("band", "fl_difference")]),
+    (r"track\s*(?:distance|centres?|centers?|spacing)(?:\s*between[^?]*?" + EXG + r"\s*(?:up|dn|down)(?:\s*line)?)?|distance\s*between\s*tracks",
      [("band", "track_distance")]),
     (r"\bcut\w*|\bfill\w*|bank\s*height|embankment|\(?\s*\bfl\s*-\s*gl\b\s*\)?", [("band", "cut_fill")]),
     (r"min(?:imum)?\.?\s*(?:fl|formation(?:\s*level)?)(?:\s*req\w*\.?)?", [("lv", "min_formation_level_required")]),
-    (EXG + r"\s*up\s*(?:line\s*)?(?:fl|formation(?:\s*level)?)\b", [("band", "exg_up_fl")]),     # the band row "EXG. UP LINE FL"
+    (EXG + r"\s*(?:up|dn|down)\s*(?:line\s*)?(?:fl|formation(?:\s*level)?)\b", [("band", "exg_up_fl")]),   # "EXG. UP / DN LINE FL"
     (EXG + r"\s*(?:fl|formation(?:\s*level)?)\b", [("lv", "existing_formation_level"), ("band", "exg_up_fl")]),
     (r"free\s*-?board|\bfb\b", [("lv", "free_board")]),
     (r"\bhfl\b|high\s*flood(?:\s*level)?|flood\s*level", [("lv", "high_flood_level")]),
@@ -56,7 +56,7 @@ HELP = """I can answer, from what was read off this sheet:
   bridge 560                     full report: callout, levels, band column, checks
   ground level at bridge 560     also FL, min FL, existing FL, HFL, bed level, free board, rail level,
                                  cut/fill, FL difference, track distance, span, proposal, crossing, category
-  CH 1242662.9  /  1242+662.9    nearest bridge, and band values at the nearest column
+  CH 1242662.9  /  1242+662.9    nearest bridge, and band values interpolated at that chainage
   which bridges are flagged      FLAG / CHECK findings
   list bridges  |  summary  |  title  |  drawing number  |  scale  |  TBM BM39  |  bench marks"""
 
@@ -87,6 +87,9 @@ class SheetQA:
         with the model (None when the model is not loaded)."""
         self.r = result
         self.band_reader = band_reader
+        # the existing line's FL row is "EXG. UP LINE FL" on 3rd-line sheets and "EXG. DN LINE FL" on 4th-line sheets
+        lab = (result.get("band_labels") or {}).get("exg_up_fl")
+        self.exg_label = re.sub(r"\.(?=[A-Z])", ". ", re.sub(r"\s+", " ", lab)).strip() if lab else "existing line FL"
         self.bridges = result.get("bridges") or []
         self.ids = {}
         for b in self.bridges:
@@ -126,14 +129,38 @@ class SheetQA:
 
     # ------------------------------------------------------------ pieces of answers
 
-    def band_line(self, band, ch_asked):
+    def labels(self):
+        return {**BAND, "exg_up_fl": self.exg_label}
+
+    def lab(self, k):
+        return self.labels()[k]
+
+    @staticmethod
+    def how(band):
+        """Where a band value came from: interpolated between two columns, on a column, or (earlier readings) nearest column."""
+        if "y" in (band or {}):
+            if band["x1"] == band["x2"]:
+                return f"on the printed column CH {g(band['x1'])}"
+            return f"interpolated between CH {g(band['x1'])} and CH {g(band['x2'])}"
         col = (band or {}).get("nearest_column") or {}
-        if not col:
+        return f"nearest column CH {g(col.get('chainage'))} (reading made before interpolation was added; --reread to interpolate)"
+
+    def band_line(self, band, ch_asked):
+        if (band or {}).get("error"):
+            return f"band values at CH {g(ch_asked)}: {band['error']}"
+        y = band_values(band)
+        if not y:
             return None
-        vals = ", ".join(f"{lab} {g(col[k])}" for k, lab in BAND.items() if col.get(k) is not None)
-        away = abs(col["chainage"] - ch_asked) if isinstance(col.get("chainage"), (int, float)) else None
-        return (f"band column CH {g(col.get('chainage'))}" + (f" ({g(away)} m from {g(ch_asked)}, nearest column, not interpolated)"
-                                                           if away is not None else "") + f": {vals}")
+        vals = ", ".join(f"{lab} {g(y[k])}" for k, lab in self.labels().items() if y.get(k) is not None)
+        return f"band values at CH {g(ch_asked)} ({self.how(band)}): {vals}"
+
+    @staticmethod
+    def working(band, k):
+        """y1 and y2 behind an interpolated value."""
+        cols = band_columns(band)
+        if "y" not in (band or {}) or len(cols) < 2:
+            return ""
+        return f"; y1 = {g(cols[0].get(k))} at CH {g(band['x1'])}, y2 = {g(cols[1].get(k))} at CH {g(band['x2'])}"
 
     def report(self, b):
         d = b["data"]
@@ -154,7 +181,7 @@ class SheetQA:
     def value(self, b, keys):
         d = b["data"] or {}
         lv = d.get("levels") or {}
-        col = (b["band"] or {}).get("nearest_column") or {}
+        col = band_values(b["band"])
         ch = d.get("chainage_m")
         out = []
         for src, k in keys:
@@ -171,10 +198,11 @@ class SheetQA:
                     out.append(f"{LEVELS[k]}: not given in the level block")
             elif src == "band":
                 if col.get(k) is not None:
-                    away = f", {g(abs(col['chainage'] - ch))} m away" if isinstance(col.get("chainage"), (int, float)) and isinstance(ch, (int, float)) else ""
-                    out.append(f"{BAND[k]} = {g(col[k])} at band column CH {g(col.get('chainage'))} (nearest column to the bridge{away}, not interpolated)")
+                    out.append(f"{self.lab(k)} = {g(col[k])} at the bridge chainage ({self.how(b['band'])}{self.working(b['band'], k)})")
+                elif (b["band"] or {}).get("error"):
+                    out.append(f"{self.lab(k)}: {b['band']['error']}")
                 elif ("lv", "proposed_formation_level") not in keys or k != "prop_fl":
-                    out.append(f"{BAND[k]}: not read (no band column for this bridge)")
+                    out.append(f"{self.lab(k)}: not read (no band columns for this bridge)")
             elif d.get(k) is not None:
                 out.append(f"{DATA[k]}: {g(d[k])}")
         return f"{name_of(b['bridge_id'])} ({self.sheet}" + (f", CH {g(ch)}" if ch else "") + "): " + "; ".join(out) + "."
@@ -184,23 +212,27 @@ class SheetQA:
         lines = []
         if b is not None:
             lines.append(f"Nearest bridge: {name_of(b['bridge_id'])} at CH {g(b['data']['chainage_m'])} ({g(dist)} m away).")
-        col_band = b["band"] if b is not None and dist is not None and dist <= 10 else None
+        # the bridge's own reading is reused only for the bridge's exact chainage; any other chainage is read and interpolated
+        col_band = b["band"] if b is not None and dist is not None and dist < 0.001 and "y" in (b["band"] or {}) else None
         if col_band is None:
             if self.band_reader is None:
                 lines.append("Band values at this chainage were not read yet: run read_sheet.py with --adapter "
-                             "(and the sheet image) so the model can read that column.")
+                             "(and the sheet image) so the model can read the columns either side.")
             else:
                 col_band = self.band_reader(ch, f"Chainage {g(ch)}")
                 if col_band is None:
-                    lines.append(f"CH {g(ch)} is not on this sheet's data bands, or the model could not read that column.")
-        if col_band:
-            col = col_band.get("nearest_column") or {}
+                    lines.append(f"CH {g(ch)} is not on this sheet's data bands.")
+        if col_band and col_band.get("error"):
+            lines.append(f"Band values at CH {g(ch)}: {col_band['error']}.")
+        elif col_band:
+            y = band_values(col_band)
             band_keys = [k for s, k in keys if s == "band" and k != "*"]
             if band_keys:
-                lines.append("; ".join(f"{BAND[k]} = {g(col.get(k))}" for k in band_keys) +
-                             f" at band column CH {g(col.get('chainage'))} (nearest column to {g(ch)}, not interpolated).")
+                lines.append("; ".join(f"{self.lab(k)} = {g(y.get(k))}{self.working(col_band, k)}" for k in band_keys) +
+                             f" (at CH {g(ch)}, {self.how(col_band)}).")
             else:
-                lines.append(self.band_line(col_band, ch)[0].upper() + self.band_line(col_band, ch)[1:] + ".")
+                line = self.band_line(col_band, ch)
+                lines.append(line[0].upper() + line[1:] + ".")
         return "\n".join(lines)
 
     # ------------------------------------------------------------ sheet-level answers

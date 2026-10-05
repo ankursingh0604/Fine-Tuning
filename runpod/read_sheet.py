@@ -12,7 +12,7 @@ A chainage away from any bridge ("ground level at CH 1241000") makes the model r
 so keep --adapter on the command line for those.
 
 Writes, next to --out (default: a folder named after the image):
-    <name>_bridges.csv   one row per bridge: callout, level block, band values at the nearest column, checks
+    <name>_bridges.csv   one row per bridge: callout, level block, band values interpolated at the bridge chainage, checks
     <name>_read.json     everything read, including the title block and TBM table
     <name>_overlay.png   the sheet with every bridge the model found (red = flagged or failed a check)
 The image can be 50-200 dpi; 150-200 dpi gives the most reliable numbers.
@@ -26,7 +26,7 @@ from pathlib import Path
 from PIL import Image
 
 from sheet_qa import SheetQA
-from sheet_reader import Reader, Sheet
+from sheet_reader import Reader, Sheet, band_values
 
 Image.MAX_IMAGE_PIXELS = None          # whole A0 sheets at 200 dpi are ~70 megapixels
 
@@ -41,12 +41,15 @@ def save(result, out, name):
     for b in result["bridges"]:
         d = b["data"] or {}
         lv = d.get("levels") or {}
-        col = (b["band"] or {}).get("nearest_column") or {}
+        col = band_values(b["band"])
+        band = b["band"] or {}
         rows.append({"bridge_id": b["bridge_id"], "read_from": b["read_from"],
                      **{k: d.get(k) for k in ("existing_type", "existing_span", "crossing", "proposal", "category", "chainage_m")},
                      **{k: lv.get(k) for k in LEVELS},
                      **{f"band_{k}": col.get(k) for k in BAND},
-                     "band_distance_m": (b["band"] or {}).get("distance_m"),
+                     "band_x1": band.get("x1"), "band_x2": band.get("x2"),
+                     "band_note": band.get("error") or ("interpolated" if "y" in band and band.get("x1") != band.get("x2")
+                                                        else "on a printed column" if "y" in band else ""),
                      "checks": " | ".join(c["message"] for c in b["checks"])})
     with open(out / f"{name}_bridges.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["bridge_id"])

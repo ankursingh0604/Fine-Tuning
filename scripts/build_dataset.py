@@ -46,6 +46,37 @@ EMPTY_TILE_KEEP = 0.3                      # share of tiles without structures k
 SHEET_VIEW = (1400, 896)                   # whole-sheet thumbnail for layout questions
 SEED = 7
 
+# Per-sheet facts the wording depends on. The defaults are the 3rd-line drawing set (v3); the v4 builder sets
+# them for each sheet (4th-line sheets: proposed 4th line, existing DN line, rail-level note 4, ...).
+SHEET = {"prop": "3rd line", "exg": "UP line", "rail_note": 5, "ruling": (150, 6), "v4": False}
+
+INTERP_KEYS = ["cut_fill", "fl_difference", "prop_rl", "prop_fl", "track_distance", "exg_up_fl", "ground_level"]
+
+
+def bracket(cols, ch):
+    """The two printed columns either side of chainage ch (the same column twice if ch is on a column), or None.
+    cols: band columns sorted by chainage, as printed (adjacent, one every 20 m)."""
+    for a, b in zip(cols, cols[1:]):
+        if a["chainage"] == ch:
+            return a, a
+        if a["chainage"] < ch < b["chainage"]:
+            return a, b
+    if cols and cols[-1]["chainage"] == ch:
+        return cols[-1], cols[-1]
+    return None
+
+
+def interpolate(c1, c2, ch):
+    """Rule (Ankur, 2026-10-05): y - y1 = (y2 - y1) / (x2 - x1) * (x - x1) for every band row; always return y."""
+    x1, x2 = c1["chainage"], c2["chainage"]
+    t = 0.0 if x2 == x1 else (ch - x1) / (x2 - x1)
+    return {k: round(c1["values"][k] + (c2["values"][k] - c1["values"][k]) * t, 3) for k in INTERP_KEYS
+            if k in c1["values"] and k in c2["values"]}, t
+
+
+def interp_record(vals):
+    return {("exg_line_fl" if k == "exg_up_fl" and SHEET["v4"] else k): v for k, v in vals.items()}
+
 rng = random.Random(SEED)
 # Grounding questions (v2) draw from their own stream, so adding them leaves every other row unchanged.
 grng = random.Random(SEED + 1)
@@ -198,7 +229,7 @@ def explain(b, with_levels=True):
     if b.get("category"):
         parts.append(f"It is classified as a {CATEGORY.get(b['category'], b['category'])}.")
     if b.get("proposal"):
-        parts.append(f"For the proposed 3rd line it is {proposal_words(b['proposal'])}.")
+        parts.append(f"For the proposed {SHEET['prop']} it is {proposal_words(b['proposal'])}.")
     lv = b.get("lsection_levels") if with_levels else None
     if lv:
         vals = [f"{LEVEL_NAMES[k]} {v}" for k, v in lv.items() if k in LEVEL_NAMES]
@@ -295,6 +326,30 @@ NOTE_QUESTIONS = {
     10: "What is the maximum sectional speed the section is designed for?",
     11: "What axle loading are the proposed formation and bridges designed for?",
 }
+
+
+NOTE_TOPICS = [
+    (r"DIMENSIONS", "In what units are the dimensions on this drawing?"),
+    (r"EXISTING WORK", "How is existing work shown on this drawing?"),
+    (r"PROPOSED WORK", "How is proposed work shown on this drawing?"),
+    (r"YARD GRADIENT", "What gradient is maintained in yards, according to the notes?"),
+    (r"RAIL LEVEL", "How high above formation level should the rail level be, and for what track structure?"),
+    (r"^RULING GRADIENT", "What is the ruling gradient of this section?"),
+    (r"VERTICAL CURVE", "When is a vertical curve provided, according to the notes?"),
+    (r"LAND TO BE ACQUIRED", "How is land to be acquired shown?"),
+    (r"RECKONED|CHAINAGE ARE TAKEN", "From where are the chainages reckoned, according to the notes?"),
+    (r"SECTIONAL SPEED", "What is the maximum sectional speed the section is designed for?"),
+    (r"AXLE LOADING", "What axle loading are the proposed formation and bridges designed for?"),
+    (r"BRIDGE NUMBERS", "How are the bridges numbered on this drawing?"),
+    (r"TRACK CENTRE", "What minimum track centre does the drawing require?"),
+    (r"TERMS OF REFERENCE:", "What do the terms of reference give for the design speed and the ruling gradient?"),
+]
+
+
+def note_question(n):
+    if not SHEET["v4"]:
+        return NOTE_QUESTIONS.get(n["no"])
+    return next((q for pat, q in NOTE_TOPICS if re.search(pat, n["text"])), None)
 
 
 def pick(task, **kw):
@@ -469,14 +524,31 @@ def panel_crops(page, ann, sheet):
         rows.append(row(sheet, "tbm_json", path, img.size, pick("tbm_json"), fenced(tbm)))
         t = rng.choice(tbm)
         rows.append(row(sheet, "tbm_qa", path, img.size, f"What is the MSL value of {t['tbm_id']}?",
-                        f"{t['tbm_id']} is at MSL {t['msl_m']} m, chainage {t['chainage_m']} m."))
+                        f"{t['tbm_id']} is at MSL {t['msl_m']} m" + (f", chainage {t['chainage_m']} m." if t["chainage_m"] is not None else ".")))
+    if SHEET["v4"] and ann.get("bridge_table"):
+        # BRIDGE DETAILS table (Topo sheets): read it whole, and one row at a time
+        bt = ann["bridge_table"]
+        box = [min(r["bbox"][0] for r in bt) - 8, min(r["bbox"][1] for r in bt) - 60, max(r["bbox"][2] for r in bt) + 8,
+               max(r["bbox"][3] for r in bt) + 6]
+        img, _ = render(page, box)
+        path = save(img, f"s{sheet}_brtable")
+        body = [{k: r[k] for k in r if k != "bbox"} for r in bt]
+        rows.append(row(sheet, "bridge_table_json", path, img.size,
+                        rng.choice(["Read the bridge details table and return every row as JSON.",
+                                    "Extract every bridge from this BRIDGE DETAILS table as JSON."]), fenced(body)))
+        r_ = rng.choice(body)
+        rows.append(row(sheet, "bridge_table_qa", path, img.size,
+                        f"According to the bridge details table, what is proposed for bridge {r_['bridge_id']}?",
+                        f"Bridge {r_['bridge_id']} (CH {r_['chainage_m']}): existing {r_['existing_type'] or '-'} {r_['existing_span'] or ''} "
+                        f"over {r_['crossing'] or '-'}; proposed {r_['proposed_structure'] or '-'} {r_['proposed_span'] or ''} "
+                        f"({r_['category'] or '-'}).".replace("  ", " ")))
 
     # Notes, legend and abbreviations are the same on every sheet: a few questions per sheet is enough.
     img, _ = render(page, R["notes"])
     path = save(img, f"s{sheet}_notes")
     for n in rng.sample(ann["notes"], 3):
-        if n["no"] in NOTE_QUESTIONS:
-            rows.append(row(sheet, "notes_qa", path, img.size, NOTE_QUESTIONS[n["no"]],
+        if note_question(n):
+            rows.append(row(sheet, "notes_qa", path, img.size, note_question(n),
                             f"Note {n['no']}: {n['text'].capitalize()}"))
     img, _ = render(page, R["abbreviations"])
     path = save(img, f"s{sheet}_abbr")
@@ -486,12 +558,17 @@ def panel_crops(page, ann, sheet):
     return rows
 
 
-BAND_NAMES = {"cut_fill": "cut (-) / fill (+), FL - GL (m)",
-              "fl_difference": "difference between the proposed 3rd line FL and the existing UP line FL",
-              "prop_rl": "proposed 3rd line rail level (RL)", "prop_fl": "proposed 3rd line formation level (FL)",
-              "track_distance": "track distance between the proposed 3rd line and the existing UP line (m)",
-              "exg_up_fl": "existing UP line formation level (FL)",
-              "ground_level": "ground level below the proposed 3rd line (m)", "chainage": "proposed 3rd line chainage"}
+def band_names():
+    p, e = SHEET["prop"], SHEET["exg"]
+    return {"cut_fill": "cut (-) / fill (+), FL - GL (m)",
+            "fl_difference": f"difference between the proposed {p} FL and the existing {e} FL",
+            "prop_rl": f"proposed {p} rail level (RL)", "prop_fl": f"proposed {p} formation level (FL)",
+            "track_distance": f"track distance between the proposed {p} and the existing {e} (m)",
+            "exg_up_fl": f"existing {e} formation level (FL)",
+            "ground_level": f"ground level below the proposed {p} (m)", "chainage": f"proposed {p} chainage"}
+
+
+BAND_NAMES = band_names()           # the 3rd-line wording, as in v3
 
 
 def ch_text(ch):
@@ -501,6 +578,9 @@ def ch_text(ch):
 def band_record(col):
     v = dict(col["values"])
     v["chainage"] = int(v["chainage"]) if float(v["chainage"]).is_integer() else v["chainage"]
+    if SHEET["v4"] and "exg_up_fl" in v:
+        # v4: the existing line is UP on 3rd-line sheets and DN on 4th-line sheets, so the key names no line
+        v = {("exg_line_fl" if k == "exg_up_fl" else k): x for k, x in v.items()}
     return {"chainage": v.pop("chainage"), **v}
 
 
@@ -539,10 +619,11 @@ def band_crops(page, ann, sheet, blocked_ch):
                         fenced(band_record(c))))
         for _ in range(2):
             c = brng.choice(usable)
-            k = brng.choice([k for k in BAND_NAMES if k != "chainage"])
+            names = band_names()
+            k = brng.choice([k for k in names if k != "chainage"])
             rows.append(row(sheet, "band_qa", path, img.size,
-                            f"What is the {BAND_NAMES[k]} at chainage {ch_text(c['chainage'])}?",
-                            f"At chainage {ch_text(c['chainage'])} the {BAND_NAMES[k]} is {c['values'][k]}."))
+                            f"What is the {names[k]} at chainage {ch_text(c['chainage'])}?",
+                            f"At chainage {ch_text(c['chainage'])} the {names[k]} is {c['values'][k]}."))
         if brng.random() < 0.5:
             rows.append(row(sheet, "band_range", path, img.size, "Which chainages do the data bands in this crop cover?",
                             f"This crop covers chainage {lo} to {hi}: {len(win)} columns, one every 20 m."))
@@ -551,7 +632,7 @@ def band_crops(page, ann, sheet, blocked_ch):
             if others:
                 c = brng.choice(others)
                 rows.append(row(sheet, "band_absent", path, img.size,
-                                f"What is the proposed 3rd line FL at chainage {ch_text(c['chainage'])}?",
+                                f"What is the proposed {SHEET['prop']} FL at chainage {ch_text(c['chainage'])}?",
                                 f"Chainage {ch_text(c['chainage'])} is not in this crop. It shows chainage {lo} to {hi}."))
         # The use case: a bridge's chainage (read from its callout) -> the data-band values at that chainage.
         # Rule (Ankur): take the NEAREST printed column, never interpolate between columns.
@@ -559,10 +640,27 @@ def band_crops(page, ann, sheet, blocked_ch):
             ch = b.get("chainage_m")
             if not ch or not b["complete"] or not (win[0]["chainage"] <= ch <= win[-1]["chainage"]):
                 continue
+            name = b["bridge_id"] if b["bridge_id"].startswith(("ROB", "LC")) else f"bridge {b['bridge_id']}"
+            if SHEET.get("interpolate"):
+                # v4 rule: interpolate between the two printed columns either side, and always return y.
+                # Both columns must be in this crop, printed consistently (in `cols`, which are checks_ok) and adjacent.
+                br = bracket(win, ch)
+                if not br or br[0]["chainage"] in blocked_ch or br[1]["chainage"] in blocked_ch:
+                    continue
+                c1, c2 = br
+                if c2 is not c1 and abs(c2["chainage"] - c1["chainage"] - 20) > 0.5:
+                    continue                       # a column between them failed its checks: do not span the gap
+                y, t = interpolate(c1, c2, ch)
+                rows.append(row(sheet, "band_bridge", path, img.size,
+                                f"{name[0].upper() + name[1:]} is at chainage {ch}. Give the data-band values at that chainage as JSON, "
+                                f"interpolating between the columns either side.",
+                                fenced({"chainage": ch, "x1": band_record(c1)["chainage"], "x2": band_record(c2)["chainage"],
+                                        "column_x1": band_record(c1), "column_x2": band_record(c2),
+                                        "y": interp_record(y)})))
+                continue
             near = min(win, key=lambda c: abs(c["chainage"] - ch))
             if near["chainage"] in blocked_ch:
                 continue
-            name = b["bridge_id"] if b["bridge_id"].startswith(("ROB", "LC")) else f"bridge {b['bridge_id']}"
             rows.append(row(sheet, "band_bridge", path, img.size,
                             f"{name[0].upper() + name[1:]} is at chainage {ch}. Give the data-band values at the nearest column as JSON.",
                             fenced({"bridge_chainage": ch, "nearest_column": band_record(near),
@@ -579,7 +677,7 @@ def sheet_view(page, ann, sheet):
     canvas.paste(img, (0, 0))
     path = save(canvas, f"s{sheet}_sheet")
     parts = [{"bbox_2d": [round(v * s) for v in box], "label": REGION_NAMES[name]} for name, box in ann["regions"].items()]
-    ans = ("This is a railway Detailed Plan and L-Section sheet: the alignment plan of the proposed 3rd line is on top, "
+    ans = (f"This is a railway Detailed Plan and L-Section sheet: the alignment plan of the proposed {SHEET['prop']} is on top, "
            "the longitudinal section (profile and data bands) below it, and notes, TBM table, legend, abbreviations "
            "and the title block in the right-hand panel.\n" + fenced(parts))
     return [row(sheet, "sheet_layout", path, SHEET_VIEW, pick("sheet_layout"), ans)]

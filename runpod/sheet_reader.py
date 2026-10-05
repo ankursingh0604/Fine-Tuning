@@ -9,7 +9,8 @@ tall). So the reader does what a person would do with a magnifier:
   2. tiles the drawing into training-size crops and asks each "find all bridge callouts" (trained task)
   3. crops around each bridge callout + level block and asks "read the callout as JSON" (trained task)
   4. finds the L-section data bands, reads their chainage range once, then for each bridge crops the band
-     columns around it (with the row labels, as in training) and asks for the nearest column (trained task)
+     columns around it (with the row labels, as in training), reads the two printed columns either side of the
+     bridge chainage (trained task) and interpolates every row between them (y = y1 + (y2 - y1)/(x2 - x1) * (x - x1))
   5. reads the title block and the TBM table (found by their headings if they are not at the usual place)
   6. checks everything it read (band arithmetic, FL vs MIN FL REQ., level block vs bands) so misreads
      are flagged rather than passed on silently
@@ -265,22 +266,43 @@ class Reader:
             lay["step"] = rng[2]
         return lay
 
-    def band_at(self, sh, layout, ch, name):
-        """The band column nearest chainage ch (no interpolation), read by the model, or None if ch is off the bands."""
-        idx = int(round((ch - layout["start_ch"]) / layout.get("step", 20)))
-        if not 0 <= idx < layout["n_cols"]:
-            return None
-        s = max(0, min(idx - 8, layout["n_cols"] - 16))
+    def read_column(self, sh, layout, i, name):
+        """The printed band column number i (0 = first), read by the model, or None."""
+        xc = layout["start_ch"] + i * layout.get("step", 20)
+        s = max(0, min(i - 8, layout["n_cols"] - 16))
         img, (x0, x1) = self.band_image(sh, layout, s)
-        band = parse_json(self.ask([img], Q_BAND.format(name=name, ch=g(ch)), {"kind": "band", "xrange": (x0, x1), "ch": ch}))
-        if not isinstance(band, dict):
-            return None
-        col = band.get("nearest_column")
-        if layout.get("rows") and isinstance(col, dict):    # values of rows this sheet does not have were not seen
+        band = parse_json(self.ask([img], Q_BAND.format(name=name, ch=g(xc)), {"kind": "band", "xrange": (x0, x1), "ch": xc}))
+        col = band.get("nearest_column") if isinstance(band, dict) else None
+        if not isinstance(col, dict) or not isinstance(col.get("chainage"), (int, float)) or abs(col["chainage"] - xc) > 0.5:
+            return None                                     # not read, or the model read another column
+        if layout.get("rows"):                              # values of rows this sheet does not have were not seen
             for f in ROW_ORDER[:-1]:
                 if f not in layout["rows"]:
                     col.pop(f, None)
-        return band
+        return col
+
+    def band_at(self, sh, layout, ch, name):
+        """Band values at chainage ch (rule, Ankur 2026-10-05): read the two printed columns either side, x1 and x2,
+        and interpolate every row, y = y1 + (y2 - y1) / (x2 - x1) * (x - x1); on a printed column, y is that column.
+        The model only reads the columns; the arithmetic is done here. None if ch is off the bands."""
+        step = layout.get("step", 20)
+        k = (ch - layout["start_ch"]) / step
+        exact = abs(k - round(k)) < 1e-6
+        idx = [int(round(k))] if exact else [int(np.floor(k)), int(np.floor(k)) + 1]
+        if not all(0 <= i < layout["n_cols"] for i in idx):
+            return None
+        cols = [self.read_column(sh, layout, i, name) for i in idx]
+        out = {"chainage": ch, "x1": layout["start_ch"] + idx[0] * step, "x2": layout["start_ch"] + idx[-1] * step}
+        if any(c is None for c in cols):
+            out["error"] = ("the printed column at CH " + " and ".join(g(out[x]) for x, c in zip(("x1", "x2"), cols) if c is None)
+                            + " could not be read, so the value cannot be interpolated")
+            out["columns"] = [c for c in cols if c]
+            return out
+        c1, c2 = cols[0], cols[-1]
+        t = 0.0 if exact else (ch - c1["chainage"]) / (c2["chainage"] - c1["chainage"])
+        out.update({"t": round(t, 4), "columns": cols if not exact else [c1],
+                    "y": {f: round(c1[f] + (c2[f] - c1[f]) * t, 3) for f in ROW_ORDER[:-1] if f in c1 and f in c2}})
+        return out
 
     # 5: title block and TBM table
     def panel_reads(self, sh, lay):
@@ -351,6 +373,8 @@ class Reader:
         result["title"], result["tbm"], where = self.panel_reads(sh, lay)
         result["findings"] = [c for b in result["bridges"] for c in b["checks"]]
         result["layout"] = verdict(lay, result, where)
+        # the band rows' printed labels (e.g. "EXG. DN LINE FL"), so answers use the sheet's own wording
+        result["band_labels"] = {r["field"]: r["label"] for r in (lay["band"] or {}).get("rows", []) if r.get("field") and r.get("label")}
         if result["layout"]["confidence"] != "high":
             result["warnings"] += result["layout"]["warnings"]
         result["overlay"] = overlay(sh, result)
@@ -374,8 +398,7 @@ def verdict(lay, result, where):
     """How far the reading can be trusted, from the layout found and from checks on what was read."""
     notes = list(lay["notes"])
     lower = lambda a, b: min(a, b, key=LEVELS_OF_TRUST.index)      # noqa: E731
-    cols = [b["band"]["nearest_column"] for b in result["bridges"]
-            if isinstance(b["band"], dict) and isinstance(b["band"].get("nearest_column"), dict)]
+    cols = [c for b in result["bridges"] for c in band_columns(b["band"])]
     full = [c for c in cols if all(k in c for k in ROW_ORDER[:-1])]
     ok = sum(1 for c in full if band_adds_up(c))
     conf = {"known": "high", "similar": "medium", "unknown": "low"}[lay["status"]]
@@ -406,6 +429,24 @@ def verdict(lay, result, where):
 
 # ---------------------------------------------------------------- checks on what was read
 
+def band_columns(band):
+    """The printed columns behind a band result (new: x1/x2; readings saved by the earlier version: one nearest column)."""
+    if not isinstance(band, dict):
+        return []
+    if "columns" in band:
+        return [c for c in band["columns"] if isinstance(c, dict)]
+    return [band["nearest_column"]] if isinstance(band.get("nearest_column"), dict) else []
+
+
+def band_values(band):
+    """The band values at the asked chainage: interpolated y (new), or the nearest column (earlier readings)."""
+    if not isinstance(band, dict):
+        return {}
+    if "y" in band:
+        return band["y"] or {}
+    return band.get("nearest_column") or {} if "nearest_column" in band else {}
+
+
 def check_bridge(rec):
     out = []
     bid, d, band = rec["bridge_id"], rec["data"] or {}, rec["band"] or {}
@@ -416,8 +457,9 @@ def check_bridge(rec):
     if isinstance(fl, (int, float)) and isinstance(req, (int, float)) and fl < req:
         out.append({"severity": "FLAG", "bridge": bid,
                     "message": f"FLAG: For bridge {bid} min. FL = {g(req)}, and FL = {g(fl)} ({g(req - fl)} m below the minimum required)."})
-    col = band.get("nearest_column") if isinstance(band, dict) else None
-    if isinstance(col, dict):
+    if isinstance(band, dict) and band.get("error"):
+        out.append({"severity": "INFO", "bridge": bid, "message": f"Bridge {bid}: {band['error']}."})
+    for col in band_columns(band):
         try:
             bad = []
             if abs(col["prop_rl"] - col["prop_fl"] - RAIL) > TOL:
@@ -429,11 +471,12 @@ def check_bridge(rec):
             if bad:
                 out.append({"severity": "CHECK", "bridge": bid,
                             "message": f"Bridge {bid}: band column {g(col.get('chainage'))} does not add up ({'; '.join(bad)}) - probably a misread digit."})
-            if isinstance(fl, (int, float)) and abs(col["prop_fl"] - fl) > 0.05:
-                out.append({"severity": "CHECK", "bridge": bid,
-                            "message": f"Bridge {bid}: level block FL {g(fl)} vs band FL {g(col['prop_fl'])} at CH {g(col.get('chainage'))}."})
         except (KeyError, TypeError):
             out.append({"severity": "INFO", "bridge": bid, "message": f"Bridge {bid}: the band column was read incompletely."})
+    y = band_values(band)
+    if isinstance(fl, (int, float)) and isinstance(y.get("prop_fl"), (int, float)) and abs(y["prop_fl"] - fl) > 0.05:
+        out.append({"severity": "CHECK", "bridge": bid,
+                    "message": f"Bridge {bid}: level block FL {g(fl)} vs band FL {g(y['prop_fl'])} at CH {g(band.get('chainage', rec['data'].get('chainage_m')))}."})
     return out
 
 
