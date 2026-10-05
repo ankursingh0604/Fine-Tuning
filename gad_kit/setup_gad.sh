@@ -7,17 +7,17 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VENV="${GAD_VENV:-$HOME/venv_gad}"
 if [ ! -d "$VENV" ]; then
-  python3 -m pip install -q --user uv || true
-  python3 -m uv venv "$VENV" --python 3.11 || python3 -m venv "$VENV"
+  python3 -m venv "$VENV" || { echo "Could not create the environment. Install it with: sudo apt install python3-venv"; exit 1; }
 fi
 source "$VENV/bin/activate"
-python -m pip install -q uv
-uv pip install -q "torch==2.8.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-uv pip install -q "triton>=3.3.0" numpy pillow pymupdf bitsandbytes "xformers==0.0.32.post2" \
+python -m pip install -q --upgrade pip uv           # uv inside the environment (newer Ubuntu blocks it outside)
+UV="python -m uv"
+$UV pip install -q "torch==2.8.0" torchvision --index-url https://download.pytorch.org/whl/cu128
+$UV pip install -q "triton>=3.3.0" numpy pillow pymupdf bitsandbytes "xformers==0.0.32.post2" \
     "unsloth_zoo[base] @ git+https://github.com/unslothai/unsloth-zoo" \
     "unsloth[base] @ git+https://github.com/unslothai/unsloth"
-uv pip install -q --upgrade --no-deps "tokenizers>=0.22.0,<=0.23.0" "trl==0.22.2"
-uv pip install -q "transformers==5.2.0" huggingface_hub
+$UV pip install -q --upgrade --no-deps "tokenizers>=0.22.0,<=0.23.0" "trl==0.22.2"
+$UV pip install -q "transformers==5.2.0" huggingface_hub
 
 python - <<'EOF'
 import torch
