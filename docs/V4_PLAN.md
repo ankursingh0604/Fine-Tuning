@@ -109,7 +109,7 @@ Expected time per scanned sheet in accuracy mode: roughly 5-15 minutes (to be me
 | `read_sheet(image or pdf)` | Reads a whole sheet into the store (exact for vector PDFs; the model on tiles for images) |
 | `look(sheet, area, question)` | Zooms into any part of a sheet and asks the vision model about it |
 | `query(...)` | Searches the store of every sheet read (bridges, bands, curves, gradients, TBMs, notes, ...) |
-| `band_at(chainage)` | Nearest band column, never interpolated |
+| `band_at(chainage)` | Band values at any chainage: linear interpolation between the two printed columns either side, always returning y (exact column -> that column's values) |
 | `calc(expression)` | Exact arithmetic (the model never does arithmetic in its head) |
 | `check(rule, ...)` | FL >= MIN FL, ruling gradient, track centres >= 4.725 m, free board, band arithmetic, curve formulas |
 | `search_library(query)` | Searches the local reference library (codes, manuals, standards, abbreviation lists) |
@@ -156,7 +156,7 @@ For vector PDFs the same store is filled exactly from `annotate.py` (no model ne
 - From images not every value will be perfect: tiny, overlapping or low-DPI text can be misread. Checks catch many
   misreads, but ordinary text (a note's wording, a station name) has nothing to check it against. Vector PDFs are exact.
 - Graphics are not data: the model can say a curve is there and read its box, but the drawn shape of the ground line
-  between columns is not printed data, and the nearest-column rule means no interpolation anyway.
+  between columns is not printed data; band values between columns come from the interpolation rule, not from the drawn line.
 - It knows only the sheets and documents given to it; reference drawings mentioned on a sheet are not known unless
   uploaded too.
 
@@ -227,8 +227,8 @@ Some questions need knowledge that is not on any sheet ("what does CTP mean?", "
    (4) if still unclear, ask the user. A source always overrides the guess, and the answer says which it was:
    "confirmed by the sheet's abbreviations", "corrected by <source>", or "still a guess".
    **Guess meanings, never values:** levels, chainages, spans and other numbers are only ever read from the drawing;
-   an unreadable digit is reported as unreadable, never filled in, and between band columns the nearest column is
-   used, never an estimate. On a new layout, unfamiliar terms found while reading are looked up the same way, after the
+   an unreadable digit is reported as unreadable, never filled in. Between band columns the value is interpolated by the
+   rule (y - y1 = (y2 - y1)/(x2 - x1) * (x - x1)) from the two printed columns — computed, not guessed. On a new layout, unfamiliar terms found while reading are looked up the same way, after the
    panel and library, without interrupting the reading.
    A web result only explains a term's meaning; it never changes a value read from the drawing or which row a value
    belongs to — if the meaning stays uncertain, the row keeps its printed label.
@@ -316,7 +316,8 @@ score in the test set.
 | Value printed and checks pass | Answer |
 | Value not printed on the sheet | "Not on the sheet" (not a guess, not interpolated) |
 | Value read but a check fails (band arithmetic, level block vs band) | Give the value, say it failed the check and is probably misread |
-| Between band columns | Nearest column only, with the distance; never interpolate |
+| Between band columns | Interpolate between the two printed columns either side, y - y1 = (y2 - y1)/(x2 - x1) * (x - x1); always return y and show x1, x2, y1, y2 |
+| A bracketing column is unreadable or failed its checks | Say so; do not interpolate across the gap |
 | FL below MIN FL | "FLAG: For bridge X min. FL = .., and FL = .." |
 | Two sources disagree (plan vs L-section, drawing inconsistencies) | Report both and the disagreement |
 | Unfamiliar term / abbreviation / label | Give its own best guess of the meaning, labelled as a guess with how sure it is; then confirm or correct it (sheet panel -> library -> internet -> ask) |
@@ -348,7 +349,9 @@ Rules:
    model's head.
 3. Reasoning uses only values from tools (the store, `look`, `band_at`) — never remembered or invented values — and
    cites where each came from (sheet, chainage, column).
-4. Nearest band column only, never interpolation; FL below MIN FL always produces the flag sentence.
+4. Band values between columns: linear interpolation between the two printed columns either side, always returning y
+   (decided 2026-10-05, replacing the earlier nearest-column rule), with the working shown and the arithmetic done by
+   `calc`; FL below MIN FL always produces the flag sentence.
 5. If the reasoning finds a gap or a conflict (value not printed, check fails, sources disagree), the answer says so
    instead of smoothing it over.
 
@@ -381,7 +384,7 @@ read, not from model reasoning.
      panel", generated from the annotations (every label's text is stored). The reader then asks the model for the
      labels and compares with the OCR (RapidOCR / PP-OCRv4): agreement confirms the layout, disagreement is flagged.
      OCR stays as the independent check.
-   - Reasoning: existing chain-of-thought families, nearest column, MIN FL flag, plus thinking traces only where the
+   - Reasoning: existing chain-of-thought families, band interpolation with worked formula, MIN FL flag, plus thinking traces only where the
      reasoning rules say so (see "Reasoning rules").
    - Unseen layouts: generic table reading and generic text-block reading on layout variants generated from our
      sheets (see "L-section layouts the model was not trained on").
