@@ -110,8 +110,23 @@ def to_chat(row, ds):
     return [{"role": "user", "content": ucontent}, amsg], images, bool(m), False
 
 
+def drop_old_thinking(msgs):
+    """Qwen3.5's template drops the thinking of assistant turns before the last user message (at use, the history
+    carries no old thinking either); do the same explicitly so training and use see the same text."""
+    users = [i for i, m in enumerate(msgs) if m["role"] == "user"]
+    last_user = users[-1] if users else -1
+    out = []
+    for i, m in enumerate(msgs):
+        if i < last_user and m.get("reasoning_content"):
+            m = {k: v for k, v in m.items() if k != "reasoning_content"}
+        out.append(m)
+    return out
+
+
 def render(processor, msgs, thinking, tools=None, add_generation_prompt=False):
-    """The chat-template text. Falls back to inline <think> blocks if this template ignores reasoning_content."""
+    """The chat-template text. Falls back to inline <think> blocks only if the template ignores the reasoning of the
+    current turn (the turns after the last user message)."""
+    msgs = drop_old_thinking(msgs)
     kw = dict(tokenize=False, add_generation_prompt=add_generation_prompt, enable_thinking=thinking)
     if tools:
         kw["tools"] = tools

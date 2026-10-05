@@ -71,7 +71,7 @@ def main():
             final = msgs[-1].get("content") or ""
             if final and final.strip()[:60] not in trained:
                 problems["final answer not in the trained tokens"] += 1
-            for m in msgs:
+            for m in DV.drop_old_thinking(msgs):
                 if m["role"] == "user":
                     u = DV.text_of(m["content"]).strip()[:50]
                     if u and u in trained:
