@@ -57,7 +57,9 @@ are caught here instead, mostly for free:
    tool calls well-formed, thinking traces only where the reasoning rules say); the Qwen3.5 chat template applied with
    the tokenizer (CPU) to every row; token lengths measured so the sequence limit and batch size are set from real
    numbers; a sample of rows rendered for a visual check.
-2. **Smoke test at the start of the main run (~30-60 min):** a few hundred steps, then automatic checks — loss going
+2. **Smoke test at the start of the main run (~30-60 min)** — it also **measures the real training speed and
+   calculates the exact cost of the full run before continuing**; if it is over budget, the dataset is reduced or
+   training stops at 1 epoch (a decision made with real numbers): a few hundred steps, then automatic checks — loss going
    down, no out-of-memory, a handful of validation questions answered in the right format (JSON, tool calls,
    thinking switch). If anything fails, the pod is stopped after under an hour instead of after days. If it passes,
    training simply **continues from that checkpoint** — no time wasted.
@@ -360,8 +362,11 @@ read, not from model reasoning.
 
 ## Phases
 
-0. **Data and decisions**: new L-section PDFs (text layer, layout, annotation); held-back test sheets; the in-house
-   inference GPU (training on RunPod is decided).
+0. **Data and decisions**: about **10-12 PDFs, 100+ sheets** (about 6x v3's 17). Per PDF: sheets, vector or scanned,
+   layout, anything unusual (a table for the team); annotator extended for any new layout; annotation overlays spot
+   checked on every PDF. **Split:** one entire PDF held back as the test section (never seen in training — the truest
+   test of a new upload), plus sheets scattered across the other PDFs for validation and test, plus part of any
+   PDF with a different layout. The in-house inference GPU (training on RunPod is decided).
 1. **Store and tools** (code only): SQLite store of everything on every sheet, with sheet versions (see "Multi-sheet
    PDFs"); multi-page PDF intake (page split, page type, vector/scanned routing, cross-sheet checks); the six tools;
    tested on vector PDFs.
@@ -388,11 +393,15 @@ read, not from model reasoning.
      answer), covering every situation in the tables above, including multi-turn, clarifying, "not on the sheet",
      failed checks, unknown layouts and non-L-section inputs.
    - Varied wording from a **local** open model (answers always our checked ones).
+   - **Duplicate cap:** with 100+ sheets the dataset would grow to roughly 40,000-60,000 examples; near-duplicates
+     (e.g. every band window of every sheet in every format) are capped so training time goes to variety, not
+     repetition.
 4. **Test set**: about 300 questions with exact answers from held-back sheets, scored per category and per situation:
    correct answers, correct sources, correct clarifications, correct "not on the sheet", false-confidence rate
    (confident answers that are wrong), layout warnings raised when they should be.
 5. **Training — one run** (see "One training run"): free CPU checks, then the **27B** on the RTX PRO 6000 with a smoke
-   test at the start, validation during training, early stopping, checkpoints and resume. 122B-A10B only if the 27B
+   test at the start, validation during training, early stopping, checkpoints and resume. Expected **1-2 epochs**
+   with 100+ sheets (validation decides; cap 3). 122B-A10B only if the 27B
    falls short on the test set (a separate budget decision).
 6. **Serving**: vLLM in-house, 16-bit (80 GB GPU) or 8-bit (48 GB GPU), accuracy mode on (double reads, OCR
    cross-check, re-read on disagreement); batching keeps the extra reads affordable. Chat in CLI and app.
