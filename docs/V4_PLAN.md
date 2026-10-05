@@ -204,6 +204,14 @@ Some questions need knowledge that is not on any sheet ("what does CTP mean?", "
    - the answer is labelled "from the internet: <source>" and kept separate from drawing data;
    - every search is logged; an administrator can switch internet search off entirely.
 3. **Never sent out:** drawings, extracted values, sheet text, or questions containing project details.
+   **Never automatic:** nothing is searched without the user's approval, and nothing at all is searched while a sheet
+   is being read.
+   **Lookup order for anything new or unclear** (Ankur's rule): (1) the sheet's own right-hand panel — notes, legend,
+   abbreviations; (2) the local library; (3) the internet, with approval; (4) ask the user. On a new layout, unfamiliar
+   terms are collected during reading and shown once ("3 terms not recognised: SFL, BH, FW — FW explained by the
+   sheet's abbreviations; look up the other two? Searches will be: ..."), and the user approves all, some or none.
+   A web result only explains a term's meaning; it never changes a value read from the drawing or which row a value
+   belongs to — if the meaning stays uncertain, the row keeps its printed label.
 4. **Answers say where each part comes from:** the drawing (sheet, chainage, column), the library (document, section)
    or the internet (source) — never blended without attribution. Values always come from the drawing; general rules
    from the library or the web.
