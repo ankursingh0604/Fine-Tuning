@@ -1,6 +1,7 @@
 """Run the v4 benchmark through the assistant loop and score it per situation.
 
     python run_benchmark.py --adapter /path/to/adapter          # the trained model (needs a GPU)
+    (on RunPod train_v4.py runs it by itself after training, with the model already loaded -> /workspace/v4_run/benchmark)
     python run_benchmark.py --selftest                           # checks the scoring with a perfect and a useless fake model
 
 Scores (data/v4/benchmark/results_<name>.csv and summary): per item pass/fail with the reason; per situation the pass
@@ -15,6 +16,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -53,8 +55,9 @@ def score(item, answer, first_tool):
     return not reasons, reasons
 
 
-def run(generate, name, items=None, log=print):
+def run(generate, name, items=None, log=print, out=None):
     items = items or [json.loads(l) for l in open(BENCH, encoding="utf-8")]
+    t0 = time.time()
     tmp = Path(tempfile.mkdtemp())
     full = S.Store(tmp / "full.sqlite")
     full.ingest_annotations()
@@ -78,12 +81,15 @@ def run(generate, name, items=None, log=print):
         ok, why = score(it, answer, firsts[0] if firsts else None)
         by[it["situation"]].append(ok)
         rows.append({"id": it["id"], "situation": it["situation"], "pass": ok, "why": "; ".join(why), "answer": answer[:400]})
-        if (i + 1) % 25 == 0:
-            log(f"  {i + 1}/{len(items)}")
+        if (i + 1) % 25 == 0 or i == 4:
+            el = time.time() - t0
+            log(f"  benchmark {i + 1}/{len(items)}: {sum(r['pass'] for r in rows)} passed so far, "
+                f"{el / 60:.0f} min, about {el / (i + 1) * (len(items) - i - 1) / 60:.0f} min left")
     for st in [full, *without.values()]:
         st.db.close()
     shutil.rmtree(tmp, ignore_errors=True)
-    out = BENCH.parent
+    out = Path(out or BENCH.parent)
+    out.mkdir(parents=True, exist_ok=True)
     with open(out / f"results_{name}.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
@@ -122,12 +128,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--out", help="folder for results_*.csv and summary_*.txt (default: next to the benchmark)")
     args = ap.parse_args()
     items = [json.loads(l) for l in open(BENCH, encoding="utf-8")]
     if args.selftest:
-        good = run(oracle_for(items), "selftest_perfect", items)
-        bad = run(lambda m, t, th: "I don't know.", "selftest_useless", items)
+        good = run(oracle_for(items), "selftest_perfect", items, out=args.out)
+        bad = run(lambda m, t, th: "I don't know.", "selftest_useless", items, out=args.out)
         ok = all(r["pass"] for r in good) and not any(r["pass"] for r in bad if r["situation"] not in ("out_of_scope",))
         print("SELF-TEST", "PASSED" if ok else "FAILED")
         sys.exit(0 if ok else 1)
-    run(AG.TransformersModel(args.adapter), Path(args.adapter).name, items)
+    run(AG.TransformersModel(args.adapter), Path(args.adapter).name, items, out=args.out)

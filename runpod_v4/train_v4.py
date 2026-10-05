@@ -15,6 +15,7 @@ What happens:
  4. One epoch, hard step cap; validation and a checkpoint every ~10 % of the epoch; the best checkpoint is kept;
     early stop after 3 validations without improvement.
  5. Adapter saved (adapter/, adapter.zip), then the test sets are scored (eval/).
+ 6. The benchmark (281 questions through the assistant loop and its tools, app/ in the bundle) -> benchmark/.
 """
 import argparse
 import json
@@ -101,6 +102,7 @@ def main():
     ap.add_argument("--test-per-task", type=int, default=8)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--no-box-check", action="store_true")
+    ap.add_argument("--no-benchmark", action="store_true", help="skip the assistant benchmark after the test sets")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -247,7 +249,27 @@ def main():
 
     FastVisionModel.for_inference(model)
     E.evaluate(model, processor, ds, tools, out / "eval", per_task=args.test_per_task, log=lambda m: log(m, out))
-    log("ALL DONE - download adapter.zip, eval/ and progress.log, then stop and delete the pod", out)
+    if not args.no_benchmark:
+        benchmark(model, processor, out)
+    log("ALL DONE - download adapter.zip, eval/, benchmark/ and progress.log, then stop and delete the pod", out)
+
+
+def benchmark(model, processor, out):
+    """The 281-question benchmark through the assistant loop and tools (app/ in the bundle), with the model in memory.
+    A failure here is logged and does not lose anything: the adapter and eval/ are already saved."""
+    app = HERE / "app" / "assistant_v4"
+    if not app.exists():
+        log("benchmark skipped: app/ not in the bundle", out)
+        return
+    try:
+        sys.path.insert(0, str(app))
+        import agent as AG
+        import run_benchmark as RB
+        log("benchmark: 281 questions through the assistant and its tools ...", out)
+        RB.run(AG.TransformersModel(model=model, processor=processor), "v4", log=lambda m: log(m, out), out=out / "benchmark")
+    except Exception as e:                       # noqa: BLE001
+        log(f"benchmark failed ({type(e).__name__}: {e}); run it again with: python app/assistant_v4/run_benchmark.py "
+            f"--adapter {out / 'adapter'} --out {out / 'benchmark'}", out)
 
 
 if __name__ == "__main__":

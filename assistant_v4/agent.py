@@ -87,19 +87,22 @@ def default_system():
 
 
 class TransformersModel:
-    """generate() for a fine-tuned v4 adapter loaded with Unsloth / transformers (in-house GPU)."""
+    """generate() for a fine-tuned v4 adapter loaded with Unsloth / transformers (in-house GPU), or for a model that is
+    already loaded (model= and processor=, e.g. at the end of train_v4.py)."""
 
-    def __init__(self, adapter, load_in_4bit=False):
+    def __init__(self, adapter=None, load_in_4bit=False, model=None, processor=None, max_new_tokens=1024):
         import data_v4 as DV
-        from unsloth import FastVisionModel
-        self.DV = DV
-        self.model, self.processor = FastVisionModel.from_pretrained(adapter, load_in_4bit=load_in_4bit)
-        FastVisionModel.for_inference(self.model)
+        self.DV, self.max_new_tokens = DV, max_new_tokens
+        if model is None:
+            from unsloth import FastVisionModel
+            model, processor = FastVisionModel.from_pretrained(adapter, load_in_4bit=load_in_4bit)
+            FastVisionModel.for_inference(model)
+        self.model, self.processor = model, processor
 
     def __call__(self, messages, tools, thinking):
         import torch
         text = self.DV.render(self.processor, messages, thinking, tools, add_generation_prompt=True)
         inputs = self.processor(text=[text], return_tensors="pt").to(self.model.device)
         with torch.no_grad():
-            out = self.model.generate(**inputs, max_new_tokens=1024, do_sample=False)
+            out = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens, do_sample=False)
         return self.processor.tokenizer.decode(out[0, inputs["input_ids"].shape[1]:], skip_special_tokens=False)

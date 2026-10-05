@@ -1,5 +1,5 @@
 V4 TRAINING ON RUNPOD - STEP BY STEP
-Qwen3.5-27B, 16-bit LoRA, 1 epoch. Budget on an A100 PCIe 80 GB at $1.09/h: about $27-33.
+Qwen3.5-27B, 16-bit LoRA, 1 epoch. Budget on an A100 PCIe 80 GB at $1.09/h: about $27-33 for training + test sets, plus about $2-6 for the benchmark.
 
 A. ON THE LAPTOP (free, before renting)
   1. Build the dataset (about 60-75 min):
@@ -9,9 +9,10 @@ A. ON THE LAPTOP (free, before renting)
         .venv_check\Scripts\python runpod_v4\check_v4.py
      Must say "all passed". It writes runpod_v4\keep_ids.json and check_report.txt (max sequence length,
      tokens per epoch). Read rendered_samples.txt once: it shows exactly what the model is trained on.
-  3. Pack the bundle (~1 GB):
+  3. Pack the bundle (~1.6 GB; delete the old bundle_v4.zip first if the disk is short):
         .venv\Scripts\python runpod_v4\make_bundle_v4.py
-     -> runpod_v4\bundle_v4.zip
+     -> runpod_v4\bundle_v4.zip (dataset + images, the training kit, and app/: the assistant, its tools,
+        the annotations, the PDFs and the 281-question benchmark)
 
 B. ON RUNPOD
   4. Top up the balance: about $35-40 (the run plus a margin).
@@ -27,6 +28,7 @@ B. ON RUNPOD
   8. Setup (15-25 min, mostly the 55 GB model download):
         bash setup_v4.sh
      It prints the GPU name and memory at the start; it should say about 80 GB.
+     It also runs the benchmark self-test; the last line must be "SELF-TEST PASSED".
   9. Start training (replace 1.09 with your pod's price):
         bash run_v4.sh --price 1.09 --budget 35
  10. Watch the first hour:
@@ -42,13 +44,19 @@ B. ON RUNPOD
      stops improving 3 times in a row.
  12. If the pod restarts: start a pod with the same volume, then
         cd /workspace/v4 && bash run_v4.sh --price 1.09 --resume
- 13. At the end the log says "ALL DONE". Download from /workspace/v4_run:
-        adapter.zip, eval/ (test_scores.csv, test_summary.txt, test_predictions.jsonl), progress.log,
-        smoke_report.txt, log_history.json
+ 13. After the epoch it saves the adapter, scores the test sets (eval/), then runs the benchmark: 281 questions
+     through the assistant and its tools (progress.log shows "benchmark n/281 ... min left"; roughly 2-5 h, about
+     $2-6 - the first lines give the real estimate). To skip it, start with --no-benchmark; to run it later:
+        cd /workspace/v4 && source /workspace/venv4/bin/activate && export HF_HOME=/workspace/hf
+        python app/assistant_v4/run_benchmark.py --adapter /workspace/v4_run/adapter --out /workspace/v4_run/benchmark
+     At the end the log says "ALL DONE". Download from /workspace/v4_run:
+        adapter.zip, eval/ (test_scores.csv, test_summary.txt, test_predictions.jsonl),
+        benchmark/ (results_v4.csv, summary_v4.txt), progress.log, smoke_report.txt, log_history.json
  14. Stop and DELETE the pod. Delete the network volume too once everything is downloaded
      (a volume is billed while it exists).
 
 C. AFTERWARDS
- 15. Send me eval/test_scores.csv and progress.log: I compare with v3 and check the low-DPI scores.
+ 15. Send me eval/test_scores.csv, benchmark/summary_v4.txt and progress.log: I compare with v3, check the
+     low-DPI scores and the per-situation benchmark scores.
  16. If validation was still clearly improving at the end of the epoch, a further half epoch can be
      added with --resume --epochs 1.5 (about $12-15 more) - a decision to make with the curve in hand.
