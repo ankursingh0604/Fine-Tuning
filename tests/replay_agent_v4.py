@@ -63,6 +63,8 @@ def main():
         print(f"  {key[0]:<24} {key[1]:<15} identical {ok[key]:>5}  different {bad[key]:>4}")
     for key, (cid, w, g) in examples.items():
         print(f"\nDIFFERENT {key} in {cid}\n  dataset: {w}\n  tools:   {g}")
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(1 if bad else 0)
 
 

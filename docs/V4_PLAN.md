@@ -395,7 +395,8 @@ read, not from model reasoning.
    - **Agent behaviour:** code-generated conversations (question -> tool calls -> real tool results -> reasoning ->
      answer), covering every situation in the tables above, including multi-turn, clarifying, "not on the sheet",
      failed checks, unknown layouts and non-L-section inputs.
-   - Varied wording from a **local** open model (answers always our checked ones).
+   - Varied wording, done in-house (answers always our checked ones): rule-based rewording now, optionally richer
+     variants from a **local** open model.
    - **Duplicate cap:** with 100+ sheets the dataset would grow to roughly 40,000-60,000 examples; near-duplicates
      (e.g. every band window of every sheet in every format) are capped so training time goes to variety, not
      repetition.
@@ -409,6 +410,21 @@ read, not from model reasoning.
 6. **Serving**: vLLM in-house, 16-bit (80 GB GPU) or 8-bit (48 GB GPU), accuracy mode on (double reads, OCR
    cross-check, re-read on disagreement); batching keeps the extra reads affordable. Chat in CLI and app.
 7. **Evaluate and improve**: v4 vs v3 on the test set; fix weak areas with data, not more epochs.
+
+### Status (2026-10-05)
+
+- **Phase 1 built** (`assistant_v4/`): `store.py` (SQLite, sheet versions kept, latest revision answers), `tools.py`
+  (query, band_at with interpolation, calc, look, search_library, web_search behind the leak gate, read_sheet),
+  `agent.py` (Qwen3.5 tool-call loop, memory within a conversation). `tests/replay_agent_v4.py`: every tool call in
+  the agent dataset gives the identical result from the runtime; `tests/test_assistant_v4.py`: all passed.
+- **Phase 3 built**: dataset in `data/v4/dataset/` (normal, reasoning, generic tables, label/heading reading, low-DPI
+  and 200 dpi, agent conversations, text blocks in unfamiliar styles — `scripts/text_blocks_v4.py`).
+  Varied wording: `scripts/paraphrase_v4.py` rewords about 60 % of training questions (every number, id, line name
+  and printed label protected and checked; validation and test keep their wording). A local open model can add
+  richer variants through `data/v4/paraphrase_cache.json`, which the script uses when present.
+  Whole pipeline: `scripts/build_v4_all.py`. CPU check: all passed, 46,231 rows kept at max length 3072.
+- **Phase 4 built**: `data/v4/benchmark/benchmark_v4.jsonl` (281 questions from held-back sheets and the held-back
+  PDF, per situation), scored by `assistant_v4/run_benchmark.py` (self-test: perfect model 281/281, useless 0).
 
 ## Targets (aims, to be measured)
 

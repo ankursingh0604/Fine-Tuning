@@ -134,6 +134,9 @@ def main():
         section("Generic table reading (layouts not seen in training)", ["generic_train.jsonl", "generic_val.jsonl", "generic_test.jsonl"],
                 "Band tables re-assembled from real crops: rows re-ordered or dropped, some relabelled with a synonym, sometimes "
                 "every second column only (40 m). Answers name rows by their printed label."),
+        section("Text blocks in unfamiliar styles", ["textblocks_train.jsonl", "textblocks_val.jsonl", "textblocks_test.jsonl"],
+                "Real bridge callouts and level blocks redrawn in other styles (labels, field order, separators, fonts, colours, "
+                "boxes, rotation, clutter). The answer gives each block as printed and the bridge fields recognised in it."),
         section("Augmented training rows (low DPI and 200 dpi)", ["aug_train.jsonl", "aug_reasoning_train.jsonl"],
                 "Low-DPI copies (60-120 dpi scaled back up, some JPEG-compressed, same answers) and true 200 dpi crops rendered from the PDFs."),
         section("Low-DPI test set", ["test_lowdpi.jsonl"],

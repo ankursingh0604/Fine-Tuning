@@ -89,19 +89,28 @@ class Store:
             return f"stored as a new version ({rev}); {', '.join(r for (r,) in prior)} kept"
         return "new"
 
-    def ingest_annotations(self, folder=None):
+    def forget_file(self, name):
+        """Remove every version read from one file (used by the benchmark to re-run an upload)."""
+        self.db.execute("DELETE FROM versions WHERE file = ?", (name,))
+        self.db.execute("DELETE FROM files WHERE name = ?", (name,))
+        self.db.commit()
+        self._cache = None
+
+    def ingest_annotations(self, folder=None, exclude_pdf=None):
         """Load data/v4/annotations (the sheets already read) as version R0-of-their-file."""
         folder = Path(folder or ROOT / "data" / "v4" / "annotations")
         n = 0
         for f in sorted(folder.glob("*.json")):
             ann = json.loads(f.read_text(encoding="utf-8"))
+            if exclude_pdf and ann["source_pdf"] == exclude_pdf:
+                continue
             pdf = ROOT / ann["source_pdf"]
             sha = f"{sha_of(pdf)}:{ann['page_index']}" if pdf.exists() else f"ann:{f.stem}"
             if self.db.execute("SELECT 1 FROM versions WHERE sha = ?", (sha,)).fetchone():
                 continue
             self.add_version(ann, ann["source_pdf"], sha, ann["page_index"] + 1)
             n += 1
-        for pdf in {json.loads(f.read_text(encoding="utf-8"))["source_pdf"] for f in folder.glob("*.json")}:
+        for pdf in {json.loads(f.read_text(encoding="utf-8"))["source_pdf"] for f in folder.glob("*.json")} - {exclude_pdf}:
             if (ROOT / pdf).exists():
                 self.add_file(sha_of(ROOT / pdf), pdf)
         self.db.commit()

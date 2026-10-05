@@ -1,0 +1,12 @@
+Processor: unsloth/Qwen3.5-27B
+Dataset: C:\Users\Ankur Singh\OneDrive\Desktop\Fine-Tuning\data\v4\dataset
+Rendering / label checks on samples of every task: all passed
+Rows measured: 46431; 99.5th percentile 2923 tokens; longest 6764
+  train agent     rows   3739  median  1901  p95  3030  max  6764
+  train image     rows  36597  median  1085  p95  1250  max  2943
+  train reasoning rows   4444  median   950  p95  2377  max  2394
+  val   agent     rows    199  median  1901  p95  3309  max  4825
+  val   image     rows   1221  median  1074  p95  1236  max  2939
+  val   reasoning rows    231  median  1067  p95  2372  max  2385
+Recommended max sequence length: 3072; rows kept 46231 of 46431 (200 longer rows are left out rather than cut off)
+Tokens in one epoch of the kept training rows: about 47.9 million

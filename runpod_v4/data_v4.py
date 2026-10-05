@@ -8,6 +8,8 @@ Parts mixed for training (train split), validation (val split) and testing (test
     generic     generic_{split}.jsonl         generic table reading, thinking off
     aug         aug_train.jsonl, aug_reasoning_train.jsonl   low-DPI copies and 200 dpi crops (train only)
     agent       agent_{split}.jsonl           tool use (docs/tools_v4.json), thinking per conversation
+    textblocks  textblocks_{split}.jsonl      callouts / level blocks in unfamiliar styles, thinking off
+Training user turns are reworded (scripts/paraphrase_v4.py); validation and test keep the template wording.
 """
 import json
 import random
@@ -23,9 +25,10 @@ sys.path.insert(0, str(HERE.parent / "scripts"))       # repo layout; in the bun
 import qwen35_format as Q     # noqa: E402
 PARTS = {
     "train": ["train.jsonl", "reasoning_train.jsonl", "generic_train.jsonl", "aug_train.jsonl",
-              "aug_reasoning_train.jsonl", "agent_train.jsonl"],
-    "val": ["val.jsonl", "reasoning_val.jsonl", "generic_val.jsonl", "agent_val.jsonl"],
-    "test": ["test.jsonl", "reasoning_test.jsonl", "generic_test.jsonl", "agent_test.jsonl", "test_lowdpi.jsonl"],
+              "aug_reasoning_train.jsonl", "agent_train.jsonl", "textblocks_train.jsonl"],
+    "val": ["val.jsonl", "reasoning_val.jsonl", "generic_val.jsonl", "agent_val.jsonl", "textblocks_val.jsonl"],
+    "test": ["test.jsonl", "reasoning_test.jsonl", "generic_test.jsonl", "agent_test.jsonl", "textblocks_test.jsonl",
+             "test_lowdpi.jsonl"],
 }
 THINK_RE = re.compile(r"^\s*<think>\s*(.*?)\s*</think>\s*(.*)$", re.S)
 

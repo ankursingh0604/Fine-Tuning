@@ -90,6 +90,9 @@ def main():
     check(len(tools.query("versions", line="3rd line", sheet_no="100")) == 2, "both versions listed")
 
     print(f"\n{'ALL PASSED' if not FAILS else str(len(FAILS)) + ' FAILED'}")
+    import shutil
+    st.db.close()
+    shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(1 if FAILS else 0)
 
 
