@@ -22,3 +22,5 @@ Thumbs.db
 desktop.ini
 .DS_Store
 .vscode/
+runpod_v4/bundle_v4.zip
+.venv_check/

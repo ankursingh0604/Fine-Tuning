@@ -1,0 +1,54 @@
+V4 TRAINING ON RUNPOD - STEP BY STEP
+Qwen3.5-27B, 16-bit LoRA, 1 epoch. Budget on an A100 PCIe 80 GB at $1.09/h: about $27-33.
+
+A. ON THE LAPTOP (free, before renting)
+  1. Build the dataset (about 60-75 min):
+        .venv\Scripts\python scripts\build_v4_all.py
+     It must end with "all steps done" and qwen35_format.py reporting 0 boxes outside their image.
+  2. CPU check (needs .venv_check with transformers 5.2; downloads only the ~20 MB processor files):
+        .venv_check\Scripts\python runpod_v4\check_v4.py
+     Must say "all passed". It writes runpod_v4\keep_ids.json and check_report.txt (max sequence length,
+     tokens per epoch). Read rendered_samples.txt once: it shows exactly what the model is trained on.
+  3. Pack the bundle (~1 GB):
+        .venv\Scripts\python runpod_v4\make_bundle_v4.py
+     -> runpod_v4\bundle_v4.zip
+
+B. ON RUNPOD
+  4. Top up the balance: about $35-40 (the run plus a margin).
+  5. Storage -> Network Volumes -> create a volume of 200 GB in the same data centre as the GPU you will use.
+  6. Deploy a pod:
+        GPU: A100 PCIe 80 GB (or RTX PRO 6000 96 GB / H100 80 GB)
+        Template: RunPod PyTorch (CUDA 12.8)
+        Network volume: the one from step 5, mounted at /workspace
+        Container disk: 50 GB
+     Note the price per hour shown.
+  7. Open Jupyter (Connect -> Jupyter Lab), upload bundle_v4.zip to /workspace, then in a terminal:
+        cd /workspace && unzip -q bundle_v4.zip && cd v4
+  8. Setup (15-25 min, mostly the 55 GB model download):
+        bash setup_v4.sh
+     It prints the GPU name and memory at the start; it should say about 80 GB.
+  9. Start training (replace 1.09 with your pod's price):
+        bash run_v4.sh --price 1.09 --budget 35
+ 10. Watch the first hour:
+        tail -f /workspace/v4_run/progress.log
+     - "box convention check ... -> using rel1000" (or abs): which box format the model uses.
+     - after about 60 steps: SMOKE TEST. It shows the loss, speed, GPU use, the estimated hours and cost of
+       the whole run, and a format check. RESULT: PASS -> nothing to do, it continues.
+       RESULT: FAIL -> training has stopped; stop the pod and send me smoke_report.txt.
+     - GPU use below 80 % is reported but does not stop the run.
+ 11. Leave it running (about 20-27 h). Check now and then:
+        tail -n 20 /workspace/v4_run/progress.log
+     It validates every ~10 % of the epoch and keeps the best checkpoint; it stops early if validation
+     stops improving 3 times in a row.
+ 12. If the pod restarts: start a pod with the same volume, then
+        cd /workspace/v4 && bash run_v4.sh --price 1.09 --resume
+ 13. At the end the log says "ALL DONE". Download from /workspace/v4_run:
+        adapter.zip, eval/ (test_scores.csv, test_summary.txt, test_predictions.jsonl), progress.log,
+        smoke_report.txt, log_history.json
+ 14. Stop and DELETE the pod. Delete the network volume too once everything is downloaded
+     (a volume is billed while it exists).
+
+C. AFTERWARDS
+ 15. Send me eval/test_scores.csv and progress.log: I compare with v3 and check the low-DPI scores.
+ 16. If validation was still clearly improving at the end of the epoch, a further half epoch can be
+     added with --resume --epochs 1.5 (about $12-15 more) - a decision to make with the curve in hand.
