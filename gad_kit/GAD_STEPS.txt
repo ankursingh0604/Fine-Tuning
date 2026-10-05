@@ -1,0 +1,38 @@
+GAD (RCC BOX) MODEL ON THE RTX 3060 - STEP BY STEP
+Qwen3.5-4B, 16-bit LoRA (fits 12 GB), 2 epochs, trained on your own machine (no cloud, data stays in-house).
+
+A. ON THE LAPTOP (already done once; repeat only after changing the GADs or gad_tools\gad_kinds.py)
+  1. Read the GADs and build the dataset:
+        .venv\Scripts\python gad_tools\annotate_gad.py          (all PDFs in GAD\ -> data\gad\annotations, ~12 min)
+        .venv\Scripts\python gad_tools\build_dataset_gad.py     (-> data\gad\dataset)
+     Check any GAD by eye:  .venv\Scripts\python gad_tools\overlay_gad.py 752-1   (-> data\gad\overlays\752-1.png)
+  2. CPU check:
+        .venv_check\Scripts\python gad_kit\check_gad.py
+     Must say "all passed"; writes keep_ids.json and check_report.txt.
+  3. Pack:
+        .venv\Scripts\python gad_kit\make_bundle_gad.py   -> gad_kit\gad_bundle.zip
+     Copy gad_bundle.zip to the 3060 machine (USB / LAN).
+
+B. ON THE 3060 MACHINE (Linux)
+  4. unzip gad_bundle.zip && cd gad_bundle/gad_kit
+  5. bash setup_gad.sh            (once: libraries + the ~9 GB model; prints the GPU and "bf16: True")
+  6. bash run_gad.sh              (training starts in the background)
+  7. tail -f gad_run/progress.log
+     - after ~30 steps: SMOKE TEST - loss, speed, peak GPU memory, hours left. "RESULT: PASS" -> it continues.
+       If it runs out of memory: bash run_gad.sh --max-len 1792  (or send me smoke_report.txt)
+     - validation every ~10 %; it keeps the best checkpoint and stops early when validation stops improving.
+     - stopped / restarted? bash run_gad.sh --resume
+  8. At the end ("ALL DONE"): gad_run/adapter/ (the trained weights) and gad_run/eval/test_summary.txt
+     (the automatic score on the held-out GAD, which was never trained on).
+
+C. YOUR OWN TEST (the held-out GAD is in gad_bundle/test_gad/)
+  9. source ~/venv_gad/bin/activate
+     python ask_gad.py --adapter gad_run/adapter --pdf "../test_gad/<the PDF>" -i
+     Ask anything: "What is the proposed soffit level?", "What does section B-B represent?", "What is 9398?",
+     "What is the design discharge?", "What grade of concrete is used for the box?", "Summarize this GAD",
+     "Are there any inconsistencies?"  Add --show-facts to see what the model was given.
+     Compare with the untouched model: python ask_gad.py --base --pdf ... -q "..."
+ 10. Any vector-PDF GAD of the same kind works the same way (the drawing is read in ~10 s, then questions).
+
+D. AFTERWARDS
+ 11. Send me gad_run/eval/test_summary.txt, test_predictions.jsonl and progress.log; I check the weak tasks.

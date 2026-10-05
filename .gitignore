@@ -26,3 +26,11 @@ runpod_v4/bundle_v4.zip
 .venv_check/
 data/v4/store.sqlite
 data/v4/web_search_log.jsonl
+
+# GAD: the drawings and everything read from them stay in-house
+/GAD/*.pdf
+data/gad/
+*.gad.json
+gad_kit/gad_bundle.zip
+gad_kit/gad_run/
+gad_kit/rendered_samples.txt

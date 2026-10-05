@@ -1,6 +1,25 @@
 # GAD (General Arrangement Drawing) plan
 
-Status: **on hold** until the L-section work is finished. This file records the approach agreed in discussion so it can be picked up later.
+Status: **Phase 1 (reading and questions) started for RCC box GADs** (2026-10-05). DXF output and parametric editing
+(Phases 2-4) stay on hold. The L-section work is untouched by this.
+
+### Phase 1 as built (RCC box, 67 vector-PDF GADs of the Itarsi-Nagpur 3rd line)
+
+- `gad_tools/annotate_gad.py` reads a GAD exactly from its text layer: views (found from the drawing's own line work;
+  rotated sheets and rotated views handled), every labelled level with its meaning, labelled dimensions (T/C track
+  centres, barrel length, thicknesses, weep holes, slopes), unlabelled dimension figures (view and direction only),
+  comparative table / hydraulic data, track details, depth of track structure, bore logs, all notes, specifications,
+  design criteria, reference drawings, abbreviations, title block, and **disagreements** between places on the same
+  drawing (e.g. box size in the title vs the table). The signature block (names) is not read.
+  `gad_tools/overlay_gad.py` draws what was found on the sheet for checking.
+- `gad_tools/gad_kinds.py`: what each view, level, table row and labelled dimension means. **For the engineers to
+  review** - every "what does X represent / denote" answer comes from it.
+- `gad_tools/facts.py` picks the facts relevant to a question; `gad_tools/build_dataset_gad.py` builds question/answer
+  rows with those facts as context plus image rows (whole views, 150 dpi tiles, tables).
+- `gad_kit/`: training on the RTX 3060 (Qwen3.5-4B, 16-bit LoRA, 2 epochs), automatic scoring, and `ask_gad.py`
+  (questions about any GAD PDF). One GAD (810-1) is held back for the manual test.
+- Decided: unlabelled dimension figures are given with their view and direction only (the drawings say "do not
+  scale", and measured distances do not match the printed ones, so their meaning cannot be derived reliably).
 
 ## Goal
 
