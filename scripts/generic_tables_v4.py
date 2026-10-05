@@ -198,6 +198,54 @@ def tables_for_sheet(page, ann, sid, split):
     return rows_out
 
 
+PANEL_HEADS = re.compile(r"^(NOTES?:?|TBM DETAILS|LEGENDS?:?|ABBREVIATIONS|REFERENCE DRAWINGS|ISSUE ?RECORD|BRIDGE DETAILS|"
+                         r"CLIENT ?:|PROJECT ?:|TITLE ?:|CONSULTANT ?:|DRG\.? ?No\.?\s*:.*|SHEET NO.*|SCALE ?:.*)$", re.I)
+
+
+def label_and_heading_rows(page, ann, sid):
+    """V4 plan item: read the row labels of a band strip, and the section headings of the right-hand panel.
+    The reader compares the model's labels with the OCR's (agreement confirms the layout)."""
+    out = []
+    bd = ann.get("bands")
+    if isinstance(bd, dict) and bd.get("columns") and len(bd.get("row_y", [])) == 8:
+        ls, ry = bd["label_strip"], bd["row_y"]
+        bounds = [ry[0][0] - 6] + [(ry[i][1] + ry[i + 1][0]) / 2 for i in range(7)] + [ry[-1][1] + 6]
+        labels = [printed_label(ann, [ls[0] - 4, bounds[i], ls[2] + 6, bounds[i + 1]]) for i in range(8)]
+        # rows above the numeric ones (e.g. "VERTICAL SCHEMATIC") belong to the strip too
+        above = [l for l in ann["all_text"] if ls[0] - 4 <= l["bbox"][0] <= ls[2] + 6 and ls[1] - 2 <= l["bbox"][1] < bounds[0]]
+        top = min([l["bbox"][1] for l in above], default=bounds[0]) - 4
+        img, _ = D.render(page, [ls[0] - 4, top, ls[2] + 6, bounds[-1]])
+        path = D.save(img, f"lab_{sid}")
+        head = [re.sub(r"\s+", " ", " ".join(l["text"] for l in g)) for g in group_lines(above)]
+        rows_text = head + [l for l in labels if l]
+        out.append(D.row(sid, "read_band_labels", path, img.size,
+                         rng.choice(["Read the row labels of this data-band table, from top to bottom.",
+                                     "List the printed labels of every row in this band table, top to bottom."]),
+                         D.fenced(rows_text)))
+    panel = [l for l in ann["all_text"] if l["bbox"][0] >= 3175 and 55 <= l["bbox"][1] <= 2330 and PANEL_HEADS.match(l["text"].strip())]
+    if panel:
+        z = 100 / 72
+        save_zoom, D.ZOOM = D.ZOOM, z
+        img, _ = D.render(page, [3175, 52, 3740, 2333])
+        D.ZOOM = save_zoom
+        path = D.save(img, f"head_{sid}")
+        heads = [{"heading": l["text"].strip(), "y_px": round((l["bbox"][1] - 52) * z)} for l in sorted(panel, key=lambda l: l["bbox"][1])]
+        out.append(D.row(sid, "read_panel_headings", path, img.size,
+                         "List the section headings in this right-hand panel of the drawing, from top to bottom, with their height in the image (y in pixels).",
+                         D.fenced(heads)))
+    return out
+
+
+def group_lines(items, tol=6):
+    rows = []
+    for l in sorted(items, key=lambda l: l["bbox"][1]):
+        if rows and abs(l["bbox"][1] - rows[-1][-1]["bbox"][1]) < tol:
+            rows[-1].append(l)
+        else:
+            rows.append([l])
+    return [sorted(r, key=lambda l: l["bbox"][0]) for r in rows]
+
+
 def main():
     D.OUT, D.IMG = DS, DS / "images"
     anns = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(V.ANN.glob("*.json"))]
@@ -207,7 +255,7 @@ def main():
         sid = a["sheet_id"]
         split = "test" if (a["source_pdf"] == V.TEST_PDF or sid in V.TEST) else "val" if sid in V.VAL else "train"
         page = pdfs.setdefault(a["source_pdf"], pymupdf.open(ROOT / a["source_pdf"]))[a["page_index"]]
-        rows = tables_for_sheet(page, a, sid, split)
+        rows = tables_for_sheet(page, a, sid, split) + label_and_heading_rows(page, a, sid)
         for i, r in enumerate(rows):
             r["id"], r["split"] = f"{sid}_gt{i:03d}", split
         out[split] += rows

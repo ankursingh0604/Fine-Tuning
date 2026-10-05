@@ -72,6 +72,10 @@ class Store:
             if not line:
                 continue
             sid = a["sheet_id"]
+            self.sheet_ann = getattr(self, "sheet_ann", {})
+            self.sheet_ann[sid] = a
+            self.sheet_line = getattr(self, "sheet_line", {})
+            self.sheet_line[sid] = line
             facts = V.sheet_facts(a)
             V.rename_lines(a, facts)
             self.rail_note[sid] = facts["rail_note"]
@@ -434,6 +438,268 @@ def out_of_scope(S, line, b):
     return conv("agent_out_of_scope", b["sheet_id"], msgs, True)
 
 
+
+# ---------------------------------------------------------------- uploads, versions, page types, upload quality, look, reports
+
+def page_summary(S, a, status="new"):
+    info = a["sheet_info"]
+    bd = a.get("bands") if isinstance(a.get("bands"), dict) else {}
+    rev = ((info.get("issue_record") or [{}])[-1] or {}).get("rev") or "R0"
+    return {"page": a["page_index"] + 1, "type": "L-section sheet", "sheet_id": a["sheet_id"], "sheet_no": info.get("sheet_no"),
+            "line": S.sheet_line.get(a["sheet_id"]), "chainage_from": info.get("chainage_from"), "chainage_to": info.get("chainage_to"),
+            "revision": rev, "read_by": "PDF text layer (exact)", "layout": "known",
+            "read": {"bridges": len(a["bridges"]), "level_blocks": sum(1 for b in a["bridges"] if b.get("lsection_levels")),
+                     "curves": len(a["curves"]), "band_columns": len(bd.get("columns", [])), "tbms": len(a["tbm_benchmarks"])},
+            "findings": a.get("findings") or [], "status": status}
+
+
+def continuity(pages):
+    ls = [p for p in pages if p["type"] == "L-section sheet" and p.get("chainage_from") and p.get("chainage_to")]
+    ls.sort(key=lambda p: D_ch(p["chainage_from"]))
+    issues = []
+    for a, b in zip(ls, ls[1:]):
+        gap = D_ch(b["chainage_from"]) - D_ch(a["chainage_to"])
+        if gap > 1:
+            issues.append(f"gap of {f3(round(gap, 1))} m between sheet {a['sheet_id']} (ends {a['chainage_to']}) and {b['sheet_id']} (starts {b['chainage_from']})")
+        elif gap < -1:
+            issues.append(f"overlap of {f3(round(-gap, 1))} m between sheet {a['sheet_id']} and {b['sheet_id']}")
+    return {"checked_pairs": max(0, len(ls) - 1), "issues": issues}
+
+
+def pdf_groups(S):
+    g = defaultdict(list)
+    for sid, a in S.sheet_ann.items():
+        g[a["source_pdf"]].append(a)
+    return {k: sorted(v, key=lambda a: a["page_index"]) for k, v in g.items()}
+
+
+def upload_reply(res):
+    pages = res["pages"]
+    ls = [p for p in pages if p["type"] == "L-section sheet"]
+    other = [p for p in pages if p["type"] != "L-section sheet"]
+    lines_ = sorted({p["line"] for p in ls if p.get("line")})
+    head = f"{res['file']}: {len(pages)} page{'s' if len(pages) != 1 else ''}, {len(ls)} L-section sheet{'s' if len(ls) != 1 else ''}"
+    if ls:
+        head += f" ({ls[0]['sheet_id']} to {ls[-1]['sheet_id']}), {', '.join(lines_)}, CH {ls[0]['chainage_from']} to {ls[-1]['chainage_to']}"
+        head += ". Read exactly from the PDF's text layer." if all(p["read_by"].startswith("PDF") for p in ls) else "."
+    out = [head]
+    for p in other:
+        out.append(f"Page {p['page']} is a {p['type']}: {p['note']}")
+    tot = Counter()
+    for p in ls:
+        tot.update(p["read"])
+    if ls:
+        out.append(f"Read: {tot['bridges']} bridges ({tot['level_blocks']} with level blocks), {tot['curves']} curves, "
+                   f"{tot['band_columns']} band columns, {tot['tbms']} TBMs.")
+    c = res["continuity"]
+    out.append("Continuity: " + ("consecutive sheets join up." if not c["issues"] else "; ".join(c["issues"]) + "."))
+    fnd = [f"{p['sheet_id']}: {f}" for p in ls for f in p["findings"]]
+    if fnd:
+        out.append("Findings on the drawings (worth checking with the engineers): " + "; ".join(fnd[:6])
+                   + (f"; and {len(fnd) - 6} more" if len(fnd) > 6 else "") + ".")
+    return " ".join(out)
+
+
+def upload_pdf(S, pdf, anns, renumber=False):
+    pages = sorted((page_summary(S, a) for a in anns), key=lambda p: p["page"])
+    if renumber:                                   # a file holding only some of the sheets: pages 1..n
+        for i, p in enumerate(pages):
+            p["page"] = i + 1
+    res = {"file": pdf, "pages": pages, "continuity": continuity(pages)}
+    q = rng.choice([f"I have uploaded {pdf}. What is in it?", f"Read {pdf} and tell me what it contains.",
+                    f"Here is {pdf}. Summarise it."])
+    msgs = [user(q), call("read_sheet", {"file": pdf}, "Read the file into the store, then summarise the pages, continuity and findings."),
+            result("read_sheet", res), say(upload_reply(res), "Summarise per page type, the chainage covered, continuity and findings.")]
+    return msgs, res
+
+
+def upload_then_ask(S, pdf, anns, renumber=False):
+    msgs, res = upload_pdf(S, pdf, anns, renumber)
+    cands = [b for a in anns if a["sheet_id"] in S.sheet_line
+             for b in S.bridges[S.sheet_line[a["sheet_id"]]].values() if b["sheet_id"] == a["sheet_id"] and b["levels"]]
+    if not cands:
+        return None
+    b = rng.choice(cands)
+    line = S.sheet_line[b["sheet_id"]]
+    k = rng.choice([x for x in LEVEL_ASK if b["levels"].get(x) is not None])
+    msgs += [user(f"What is the {rng.choice(LEVEL_ASK[k])} at bridge {b['bridge_id']}?"),
+             call("query", {"kind": "bridge", "line": line, "bridge_id": b["bridge_id"]},
+                  f"The file just uploaded is the {line}, so bridge {b['bridge_id']} means the {line} bridge."),
+             result("query", b),
+             say(f"The {LEVEL_NAMES[k]} at bridge {b['bridge_id']} is {f3(b['levels'][k])} m ({src(b, line)}, from {pdf}).")]
+    return conv("agent_upload_ask", b["sheet_id"], msgs, True)
+
+
+def reupload(S, pdf, anns):
+    pages = [page_summary(S, a, "already stored (same file)") for a in sorted(anns, key=lambda a: a["page_index"])]
+    for i, pg in enumerate(pages):
+        pg["page"] = i + 1
+    res = {"file": pdf, "pages": pages, "continuity": continuity(pages)}
+    msgs = [user(f"I have uploaded {pdf} again."), call("read_sheet", {"file": pdf}), result("read_sheet", res),
+            say(f"{pdf} is identical to the file already stored (same content), so nothing new was added: the earlier reading of "
+                f"its {len(pages)} sheet(s) is reused. If the drawings were revised, upload the revised file and it will be kept as a new version.")]
+    return conv("agent_reupload", anns[0]["sheet_id"], msgs, False)
+
+
+def new_version(S, a):
+    """A revised sheet (hypothetical R1 with one changed FL, a labelled scenario) is stored as a new version; R0 is kept."""
+    line = S.sheet_line[a["sheet_id"]]
+    cands = [b for b in S.bridges[line].values() if b["sheet_id"] == a["sheet_id"] and b["levels"]
+             and b["levels"].get("proposed_formation_level") is not None]
+    if not cands:
+        return []
+    b = rng.choice(cands)
+    old = b["levels"]["proposed_formation_level"]
+    new = round(old + rng.choice([0.05, 0.1, -0.03, 0.12]), 3)
+    fname = f"{a['sheet_id']}_R1.pdf"
+    page = page_summary(S, a, "stored as a new version (R1); R0 kept")
+    page["revision"], page["page"] = "R1", 1
+    res = {"file": fname, "pages": [page], "continuity": {"checked_pairs": 0, "issues": []}}
+    b1 = json.loads(json.dumps(b))
+    b1["levels"]["proposed_formation_level"] = new
+    b1["version"] = "R1 (latest)"
+    b1["older_versions"] = [{"revision": "R0", "file": a["source_pdf"], "proposed_formation_level": old}]
+    msgs = [user(f"I have uploaded {fname}, a revised sheet."), call("read_sheet", {"file": fname}), result("read_sheet", res),
+            say(f"Stored sheet {a['sheet_id']} revision R1 as a new version; revision R0 (from {a['source_pdf']}) is kept, nothing was replaced. "
+                f"Answers use R1 from now on, and I will say when R0 differs."),
+            user(f"What is the FL at bridge {b['bridge_id']} now?"),
+            call("query", {"kind": "bridge", "line": line, "bridge_id": b["bridge_id"]}), result("query", b1),
+            say(f"The FL at bridge {b['bridge_id']} is {f3(new)} m in the latest version R1 (sheet {a['sheet_id']}). "
+                f"Revision R0 had {f3(old)} m, so it changed by {f3(round(new - old, 3))} m.")]
+    vers = [{"revision": "R0", "file": a["source_pdf"], "stored": "2026-10-01"},
+            {"revision": "R1", "file": fname, "stored": "2026-10-05", "latest": True}]
+    msgs2 = [user(f"Which versions of sheet {a['sheet_info'].get('sheet_no')} on the {line} do we have?"),
+             call("query", {"kind": "versions", "line": line, "sheet_no": a["sheet_info"].get("sheet_no")}), result("query", vers),
+             say(f"Two versions of sheet {a['sheet_id']}: R0 (from {a['source_pdf']}) and R1 (from {fname}, the latest, used by default). "
+                 f"Ask for R0 to see the earlier values.")]
+    return [conv("agent_new_version", a["sheet_id"], msgs, False), conv("agent_versions", a["sheet_id"], msgs2, False)]
+
+
+def mixed_pdf(S, pdf, anns):
+    """A PDF that also holds a cover page and a drawing that is not an L-section."""
+    shifted = []
+    for i, a in enumerate(sorted(anns, key=lambda a: a["page_index"])):
+        p = page_summary(S, a)
+        p["page"] = i + 2
+        shifted.append(p)
+    pages = ([{"page": 1, "type": "cover / index page", "sheet_id": None,
+               "note": "the title page listing the sheets; it is not an L-section and was not read into the store."}] + shifted +
+             [{"page": len(anns) + 2, "type": "drawing of another kind (it looks like a General Arrangement Drawing of a bridge)", "sheet_id": None,
+               "note": "not a Plan & L-Section sheet, so no L-section values were taken from it."}])
+    fname = pdf.replace(".pdf", "_with_cover.pdf")
+    res = {"file": fname, "pages": pages, "continuity": continuity(pages)}
+    msgs = [user(f"Please read {fname}."), call("read_sheet", {"file": fname}), result("read_sheet", res),
+            say(upload_reply(res), "Two pages are not L-section sheets: report them instead of forcing L-section fields onto them.")]
+    return conv("agent_page_types", anns[0]["sheet_id"], msgs, True)
+
+
+def image_upload(S, a, quality):
+    """One sheet uploaded as an image: low DPI, or a layout that differs from the trained sheets (labelled scenarios)."""
+    line = S.sheet_line[a["sheet_id"]]
+    cands = [b for b in S.bridges[line].values() if b["sheet_id"] == a["sheet_id"] and b["levels"]]
+    if not cands:
+        return None
+    b = rng.choice(cands)
+    page = page_summary(S, a)
+    page["read_by"], page["page"] = "image + model", 1
+    fname = f"sheet_{a['sheet_info'].get('sheet_no')}_{'75dpi' if quality == 'low_dpi' else 'scan'}.png"
+    if quality == "low_dpi":
+        page["dpi"] = 75
+        page["warnings"] = ["the image is about 75 dpi: text is about 10 px tall, so digits may be misread (150-300 dpi recommended)"]
+        caveat = "It was read from a 75 dpi image, so check this value on the drawing."
+    else:
+        page["dpi"] = 150
+        page["layout"] = "similar"
+        page["layout_notes"] = ["the band rows are in a different order from the trained sheets; they were re-stacked into the trained order before reading"]
+        caveat = "This sheet's layout differs from the trained sheets (band rows re-ordered), so check this value on the drawing."
+    k = rng.choice([x for x in LEVEL_ASK if b["levels"].get(x) is not None])
+    res = {"file": fname, "pages": [page], "continuity": {"checked_pairs": 0, "issues": []}}
+    msgs = [user(f"I have uploaded {fname}. What is the {rng.choice(LEVEL_ASK[k])} at bridge {b['bridge_id']}?"),
+            call("read_sheet", {"file": fname}), result("read_sheet", res),
+            call("query", {"kind": "bridge", "line": line, "bridge_id": b["bridge_id"]}), result("query", b),
+            say(f"The {LEVEL_NAMES[k]} at bridge {b['bridge_id']} is {f3(b['levels'][k])} m ({src(b, line)}). {caveat}",
+                "The reading carries a warning, so the answer must carry it too.")]
+    return conv("agent_upload_quality", a["sheet_id"], msgs, True)
+
+
+def unknown_layout(S, a):
+    if not a["sheet_info"].get("chainage_from"):
+        return None
+    page = page_summary(S, a)
+    page.update({"page": 1, "read_by": "image + model", "dpi": 150, "layout": "unknown",
+                 "layout_notes": ["band rows not found: track_distance", "band rows the model was not trained on (not read): BANK HEIGHT (m)"]})
+    page["read"]["band_columns"] = 0
+    fname = f"sheet_{a['sheet_info'].get('sheet_no')}_other_layout.png"
+    res = {"file": fname, "pages": [page], "continuity": {"checked_pairs": 0, "issues": []}}
+    ch = round(D_ch(a["sheet_info"]["chainage_from"]) + rng.uniform(300, 3000), 1)
+    msgs = [user(f"I uploaded {fname}. What is the track distance at CH {f3(ch)}?"),
+            call("read_sheet", {"file": fname}), result("read_sheet", res),
+            say("I cannot give the track distance from this sheet: its layout is not one I was trained on, and the band row for "
+                "track distance was not found, so no band values were read rather than guessed. It also has a row labelled "
+                "'BANK HEIGHT (m)' that I did not read. I can look at the band table directly (that reading would be marked as a "
+                "new-layout value to check), or you can upload a sheet in the usual layout.",
+                "Layout unknown and the row is missing: do not guess; say what was skipped and offer look.")]
+    return conv("agent_layout_unknown", a["sheet_id"], msgs, True)
+
+
+def look_panel(S, a):
+    sid = a["sheet_id"]
+    if rng.random() < 0.5 and a["legend"]:
+        what, obj = "legend", {"text": a["legend"]}
+        reply = f"The legend of sheet {sid} shows: " + "; ".join(a["legend"]) + "."
+    else:
+        rec = a["sheet_info"].get("issue_record") or []
+        if not rec:
+            return None
+        what, obj = "issue record", {"rows": rec}
+        reply = f"Issue record of sheet {sid}: " + "; ".join(
+            f"{r.get('rev')} dated {r.get('date')}, prepared by {r.get('prepared_by')}, checked by {r.get('checked_by')}, "
+            f"approved by {r.get('approved_by')}" for r in rec) + "."
+    msgs = [user(f"What does the {what} on sheet {sid} say?"),
+            call("look", {"sheet_id": sid, "area": f"right-hand panel, {what}", "question": f"Read the {what} as printed."}),
+            result("look", obj), say(reply)]
+    return conv("agent_look", sid, msgs, False)
+
+
+def unreadable(S, a):
+    line = S.sheet_line[a["sheet_id"]]
+    cols = [c for c in (a.get("bands") or {}).get("columns", []) if c["checks_ok"]] if isinstance(a.get("bands"), dict) else []
+    if len(cols) < 3:
+        return None
+    c = rng.choice(cols)
+    ch = c["chainage"]
+    vals = {k: v for k, v in c["values"].items() if k not in ("chainage", "ground_level")}
+    res = [{"chainage": ch, "sheet_id": a["sheet_id"], "x1": int(ch), "x2": int(ch), "column_x1": vals, "y": vals,
+            "unreadable": ["ground_level"], "note": "read from a 75 dpi image; the ground-level digits could not be read"}]
+    msgs = [user(f"What is the ground level at CH {chs(ch)} on the {line}?"),
+            call("band_at", {"line": line, "chainages": [ch]}), result("band_at", res),
+            say(f"The ground level at CH {chs(ch)} could not be read: its digits are unreadable on the 75 dpi image of sheet {a['sheet_id']}, "
+                f"and I will not guess a value. The other rows of that column were read (for example proposed FL {f3(vals.get('prop_fl'))}). "
+                f"A 150-300 dpi image or the PDF would give it exactly.",
+                "The value is unreadable: say so, never fill it in.")]
+    return conv("agent_unreadable", a["sheet_id"], msgs, True)
+
+
+def report(S, a):
+    sid, line = a["sheet_id"], S.sheet_line[a["sheet_id"]]
+    bs = sorted((b for b in S.bridges[line].values() if b["sheet_id"] == sid), key=lambda b: b["chainage_m"])
+    if len(bs) < 3:
+        return None
+    rows = ["| Bridge | Chainage | Existing | Crosses | Proposal | FL | MIN FL REQ. | Check |", "|---|---|---|---|---|---|---|---|"]
+    flags = []
+    for b in bs:
+        lv = b["levels"] or {}
+        fl, mn = lv.get("proposed_formation_level"), lv.get("min_formation_level_required")
+        if fl is not None and mn is not None and fl < mn:
+            flags.append(f"FLAG: For bridge {b['bridge_id']} min. FL = {f3(mn)}, and FL = {f3(fl)}.")
+        chk = ("FLAG" if fl is not None and mn is not None and fl < mn else "ok" if fl is not None and mn is not None else "no level block")
+        rows.append(f"| {b['bridge_id']} | {f3(b['chainage_m'])} | {' '.join(x for x in (b['existing_type'], b['existing_span']) if x) or '-'} | "
+                    f"{b['crossing'] or '-'} | {b['proposal'] or '-'} | {f3(fl) if fl is not None else '-'} | {f3(mn) if mn is not None else '-'} | {chk} |")
+    msgs = [user(rng.choice([f"Give me the bridge schedule for sheet {sid}.", f"Make a table of all bridges on sheet {sid}."])),
+            call("query", {"kind": "bridges_on_sheet", "sheet_id": sid}), result("query", bs),
+            say(f"Bridges on sheet {sid} ({line}):\n\n" + "\n".join(rows) + ("\n\n" + "\n".join(flags) if flags else ""))]
+    return conv("agent_report", sid, msgs, False)
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -490,10 +756,52 @@ def main():
             convs.append(term(S, sid, k))
         for sid in rng.sample(lacking, min(2, len(lacking))):
             convs.append(term_web(S, sid, k))
+    # uploads: a whole PDF goes to the strictest split of its sheets, so no test sheet appears in training
+    rank = {"train": 0, "val": 1, "test": 2}
+    for pdf, anns_p in pdf_groups(S).items():
+        sp = max((split_of[a["sheet_id"]] for a in anns_p), key=rank.get)
+        for _ in range(2):
+            msgs, _r = upload_pdf(S, pdf, anns_p)
+            convs.append({**conv("agent_upload", anns_p[0]["sheet_id"], msgs, True), "force_split": sp})
+        for _ in range(3):
+            c = upload_then_ask(S, pdf, anns_p)
+            if c:
+                convs.append({**c, "force_split": sp})
+        convs.append({**reupload(S, pdf, anns_p), "force_split": sp})
+        convs.append({**mixed_pdf(S, pdf, anns_p), "force_split": sp})
+        # training versions from the PDF's training sheets only (a file holding some of the sheets)
+        tr = [a for a in anns_p if split_of[a["sheet_id"]] == "train"]
+        if sp != "train" and len(tr) >= 2:
+            for _ in range(3):
+                lo = rng.randrange(0, len(tr) - 1)
+                part = tr[lo:lo + rng.randint(2, min(6, len(tr) - lo))]
+                name = f"{pdf[:-4]}_sheets_{part[0]['sheet_info'].get('sheet_no')}-{part[-1]['sheet_info'].get('sheet_no')}.pdf"
+                msgs, _r = upload_pdf(S, name, part, renumber=True)
+                convs.append({**conv("agent_upload", part[0]["sheet_id"], msgs, True), "force_split": "train"})
+                c = upload_then_ask(S, name, part, renumber=True)
+                if c:
+                    convs.append({**c, "force_split": "train"})
+            convs.append({**reupload(S, name, part), "force_split": "train"})
+            convs.append({**mixed_pdf(S, name, part), "force_split": "train"})
+    for sid, a in sorted(S.sheet_ann.items()):
+        if sid not in S.sheet_line:
+            continue
+        if rng.random() < 0.3:
+            convs += new_version(S, a)
+        for q in ("low_dpi", "similar"):
+            if rng.random() < 0.3:
+                c = image_upload(S, a, q)
+                if c:
+                    convs.append(c)
+        for fn, prob in ((unknown_layout, 0.25), (look_panel, 0.6), (unreadable, 0.45), (report, 0.7)):
+            if rng.random() < prob:
+                c = fn(S, a)
+                if c:
+                    convs.append(c)
     out = defaultdict(list)
     for i, c in enumerate(convs):
         c["id"] = f"agent_{i:05d}"
-        c["split"] = split_of.get(c["sheet"], "train")
+        c["split"] = c.pop("force_split", None) or split_of.get(c["sheet"], "train")
         out[c["split"]].append(c)
     for split in ("train", "val", "test"):
         with open(DS / f"agent_{split}.jsonl", "w", encoding="utf-8") as f:

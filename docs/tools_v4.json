@@ -1,45 +1,195 @@
 {
  "description": "Tools of the v4 L-section assistant. The agent-conversation dataset (scripts/agent_conversations_v4.py) is generated against exactly these signatures; the Phase 1 implementations must follow them. Lines: the 3rd and 4th lines share chainages and bridge numbers, so every query names the line ('3rd line' or '4th line').",
  "tools": [
-  {"type": "function", "function": {
-   "name": "query",
-   "description": "Look up what was read from the sheets (the store). kind: 'bridge' (one bridge: callout, level block, sheet), 'bridges_in_range' (bridges between two chainages, with levels), 'sheet_for_chainage' (which sheet covers a chainage), 'curve' (one curve box), 'notes' (a sheet's general notes), 'abbreviation' (meaning of a term from the sheets' abbreviation tables), 'tbm' (one bench mark).",
-   "parameters": {"type": "object", "properties": {
-     "kind": {"type": "string", "enum": ["bridge", "bridges_in_range", "sheet_for_chainage", "curve", "notes", "abbreviation", "tbm"]},
-     "line": {"type": "string", "enum": ["3rd line", "4th line"]},
-     "bridge_id": {"type": "string"},
-     "chainage": {"type": "number"},
-     "chainage_from": {"type": "number"},
-     "chainage_to": {"type": "number"},
-     "curve_no": {"type": "string"},
-     "sheet_id": {"type": "string"},
-     "term": {"type": "string"},
-     "tbm_id": {"type": "string"}},
-    "required": ["kind"]}}},
-  {"type": "function", "function": {
-   "name": "band_at",
-   "description": "Data-band values at one or more chainages: each value is interpolated between the two printed columns either side, y = y1 + (y2 - y1) / (x2 - x1) * (x - x1); on a printed column y is that column. Returns x1, x2, both columns and y for every row.",
-   "parameters": {"type": "object", "properties": {
-     "line": {"type": "string", "enum": ["3rd line", "4th line"]},
-     "chainages": {"type": "array", "items": {"type": "number"}}},
-    "required": ["line", "chainages"]}}},
-  {"type": "function", "function": {
-   "name": "calc",
-   "description": "Exact arithmetic on numbers (+ - * / and parentheses). Use it for every calculation.",
-   "parameters": {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]}}},
-  {"type": "function", "function": {
-   "name": "look",
-   "description": "Zoom into an area of a sheet image and ask the vision model about it (for anything not already in the store).",
-   "parameters": {"type": "object", "properties": {
-     "sheet_id": {"type": "string"}, "area": {"type": "string"}, "question": {"type": "string"}},
-    "required": ["sheet_id", "area", "question"]}}},
-  {"type": "function", "function": {
-   "name": "search_library",
-   "description": "Search the local reference library (codes, manuals, standards, abbreviation lists supplied by the team).",
-   "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
-  {"type": "function", "function": {
-   "name": "web_search",
-   "description": "Internet lookup of the general meaning of one term. Pass only the bare term (never sentences, chainages, levels, bridge or sheet numbers, names); code builds the query and blocks anything identifying.",
-   "parameters": {"type": "object", "properties": {"term": {"type": "string"}}, "required": ["term"]}}}
+  {
+   "type": "function",
+   "function": {
+    "name": "read_sheet",
+    "description": "Read an uploaded file (a PDF with one or more pages, or an image of one sheet) into the store. Returns per page: page type (L-section sheet, cover/index, GAD, other), sheet id, line, chainage range, revision, how it was read (PDF text layer = exact, or image + model), image DPI, layout verdict (known / similar / unknown, with notes), counts of what was read, drawing findings, and whether the page was already stored (same file), stored as a new version, or new. Also returns the continuity check between consecutive sheets.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "file": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "file"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "query",
+    "description": "Look up what was read from the sheets (the store). kind: 'bridge' (one bridge: callout, level block, sheet), 'bridges_in_range' (bridges between two chainages, with levels), 'sheet_for_chainage' (which sheet covers a chainage), 'curve' (one curve box), 'notes' (a sheet's general notes), 'abbreviation' (meaning of a term from the sheets' abbreviation tables), 'tbm' (one bench mark), 'versions' (every stored version of a sheet: revision, file, date; the latest is used by default), 'bridges_on_sheet' (all bridges of one sheet with levels, for schedules and reports).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "kind": {
+       "type": "string",
+       "enum": [
+        "bridge",
+        "bridges_in_range",
+        "sheet_for_chainage",
+        "curve",
+        "notes",
+        "abbreviation",
+        "tbm",
+        "versions",
+        "bridges_on_sheet"
+       ]
+      },
+      "line": {
+       "type": "string",
+       "enum": [
+        "3rd line",
+        "4th line"
+       ]
+      },
+      "bridge_id": {
+       "type": "string"
+      },
+      "chainage": {
+       "type": "number"
+      },
+      "chainage_from": {
+       "type": "number"
+      },
+      "chainage_to": {
+       "type": "number"
+      },
+      "curve_no": {
+       "type": "string"
+      },
+      "sheet_id": {
+       "type": "string"
+      },
+      "term": {
+       "type": "string"
+      },
+      "tbm_id": {
+       "type": "string"
+      },
+      "sheet_no": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "band_at",
+    "description": "Data-band values at one or more chainages: each value is interpolated between the two printed columns either side, y = y1 + (y2 - y1) / (x2 - x1) * (x - x1); on a printed column y is that column. Returns x1, x2, both columns and y for every row.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "line": {
+       "type": "string",
+       "enum": [
+        "3rd line",
+        "4th line"
+       ]
+      },
+      "chainages": {
+       "type": "array",
+       "items": {
+        "type": "number"
+       }
+      }
+     },
+     "required": [
+      "line",
+      "chainages"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "calc",
+    "description": "Exact arithmetic on numbers (+ - * / and parentheses). Use it for every calculation.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "expression": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "expression"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "look",
+    "description": "Zoom into an area of a sheet image and ask the vision model about it (for anything not already in the store).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "sheet_id": {
+       "type": "string"
+      },
+      "area": {
+       "type": "string"
+      },
+      "question": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "sheet_id",
+      "area",
+      "question"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_library",
+    "description": "Search the local reference library (codes, manuals, standards, abbreviation lists supplied by the team).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_search",
+    "description": "Internet lookup of the general meaning of one term. Pass only the bare term (never sentences, chainages, levels, bridge or sheet numbers, names); code builds the query and blocks anything identifying.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "term": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "term"
+     ]
+    }
+   }
+  }
  ]
 }
