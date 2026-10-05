@@ -24,3 +24,5 @@ desktop.ini
 .vscode/
 runpod_v4/bundle_v4.zip
 .venv_check/
+data/v4/store.sqlite
+data/v4/web_search_log.jsonl

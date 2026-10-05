@@ -111,8 +111,8 @@ class Store:
 
     def band_at(self, line, ch):
         xs = self.sorted_cols.get(line, [])
-        for x1, x2 in zip(xs, xs[1:]):
-            if x1 == ch or x1 < ch < x2:
+        for x1, x2 in zip(xs, xs[1:] + [None]):
+            if x1 == ch or (x2 is not None and x1 < ch < x2):
                 if x1 == ch:
                     x2 = x1
                 if x2 != x1 and x2 - x1 != 20:
@@ -123,9 +123,6 @@ class Store:
                 strip = lambda c: {k: v for k, v in c["values"].items() if k != "chainage"}     # noqa: E731
                 return {"chainage": ch, "sheet_id": s1, "x1": int(x1), "x2": int(x2), "column_x1": strip(c1),
                         "column_x2": strip(c2), "y": y, "rail_level_ok": [c1.get("rail_level_ok", True), c2.get("rail_level_ok", True)]}
-        if xs and xs[-1] == ch:
-            c1, s1 = self.cols[line][ch]
-            return {"chainage": ch, "sheet_id": s1, "x1": int(ch), "x2": int(ch), "column_x1": c1["values"], "y": c1["values"]}
         return {"chainage": ch, "error": "not on the data bands of any sheet read for this line"}
 
     def sheet_for(self, line, ch):
@@ -249,11 +246,16 @@ def min_fl(S, line, b):
     return conv("agent_min_fl", b["sheet_id"], msgs + [say(ans, "FL - MIN FL REQ. is " + ("negative: flag it." if d < 0 else "not negative: no flag."))], True)
 
 
+def bridges_between(S, line, lo, hi):
+    return sorted((b for b in S.bridges[line].values() if lo <= b["chainage_m"] <= hi), key=lambda b: b["chainage_m"])
+
+
 def range_fill(S, line, bs):
     lo, hi = bs[0]["chainage_m"] - rng.uniform(5, 300), bs[-1]["chainage_m"] + rng.uniform(5, 300)
     lo, hi = round(lo), round(hi)
+    bs = bridges_between(S, line, lo, hi)
     thr = rng.choice([1.0, 1.5, 2.0, 2.5, 3.0])
-    in_range = [{"bridge_id": b["bridge_id"], "chainage_m": b["chainage_m"], "sheet_id": b["sheet_id"]} for b in bs]
+    in_range = [{"bridge_id": b["bridge_id"], "chainage_m": b["chainage_m"], "sheet_id": b["sheet_id"], "levels": b["levels"]} for b in bs]
     bands = [S.band_at(line, b["chainage_m"]) for b in bs]
     reasoning = (f"Find the bridges between CH {lo} and {hi} on the {line}, then the interpolated cut/fill at each bridge "
                  f"chainage, and keep those with fill (positive) above {thr} m.")
@@ -280,6 +282,7 @@ def range_fill(S, line, bs):
 
 def range_flags(S, line, bs):
     lo, hi = round(bs[0]["chainage_m"] - 50), round(bs[-1]["chainage_m"] + 50)
+    bs = bridges_between(S, line, lo, hi)
     recs = [{"bridge_id": b["bridge_id"], "chainage_m": b["chainage_m"], "sheet_id": b["sheet_id"], "levels": b["levels"]} for b in bs]
     flags = [b for b in bs if b["levels"] and b["levels"].get("proposed_formation_level") is not None
              and b["levels"].get("min_formation_level_required") is not None
@@ -651,7 +654,9 @@ def look_panel(S, a):
         rec = a["sheet_info"].get("issue_record") or []
         if not rec:
             return None
-        what, obj = "issue record", {"rows": rec}
+        what = "issue record"
+        obj = {"text": [f"{r.get('rev')} | {r.get('date')} | prepared by {r.get('prepared_by')} | checked by {r.get('checked_by')} | "
+                        f"approved by {r.get('approved_by')}" for r in rec]}
         reply = f"Issue record of sheet {sid}: " + "; ".join(
             f"{r.get('rev')} dated {r.get('date')}, prepared by {r.get('prepared_by')}, checked by {r.get('checked_by')}, "
             f"approved by {r.get('approved_by')}" for r in rec) + "."
@@ -726,7 +731,8 @@ def main():
             grp = bs[i:i + rng.choice([3, 4, 5])]
             if grp[-1]["chainage_m"] - grp[0]["chainage_m"] < 6000 and len({b["sheet_id"] for b in grp}) <= 2:
                 convs.append(range_fill(S, line, grp))
-                if all(b["levels"] for b in grp):
+                lo_, hi_ = round(grp[0]["chainage_m"] - 50), round(grp[-1]["chainage_m"] + 50)
+                if all(b["levels"] for b in bridges_between(S, line, lo_, hi_)):
                     convs.append(range_flags(S, line, grp))
         for b, b2 in zip(with_lv[::4], with_lv[1::4]):
             convs.append(follow_up(S, line, b, b2))
