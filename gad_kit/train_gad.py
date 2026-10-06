@@ -68,7 +68,7 @@ def main():
     ap.add_argument("--eval-every", type=float, default=0.1, help="share of the whole run between validations")
     ap.add_argument("--val-per-task", type=int, default=8)
     ap.add_argument("--patience", type=int, default=3)
-    ap.add_argument("--smoke-steps", type=int, default=30)
+    ap.add_argument("--smoke-steps", type=int, default=50, help="loss is logged every 10 steps: 50 gives 4 values to compare")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--no-test", action="store_true", help="skip scoring the held-out GAD at the end")
     args = ap.parse_args()
@@ -116,8 +116,11 @@ def main():
             secs = (time.time() - self.t0) / max(1, state.global_step - self.s0)
             left_h = secs * (steps - state.global_step) / 3600
             evals_h = (steps / eval_steps) * len(val_rows) * 0.5 / 3600
+            # this step's loss is logged after this callback: compare the first half of the logged losses with the second
             losses = [h["loss"] for h in state.log_history if "loss" in h]
-            first, last = (sum(losses[:2]) / max(1, len(losses[:2])), sum(losses[-2:]) / max(1, len(losses[-2:]))) if losses else (0, 0)
+            half = len(losses) // 2
+            first = sum(losses[:half]) / half if half else 0
+            last = sum(losses[half:]) / (len(losses) - half) if half else 0
             peak = torch.cuda.max_memory_allocated() / torch.cuda.get_device_properties(0).total_memory
             FastVisionModel.for_inference(model)
             fmt = []
@@ -131,7 +134,7 @@ def main():
                     fmt.append((row["task"], False, f"error {e}", ""))
             FastVisionModel.for_training(model)
             fails = []
-            if losses and not last < first:
+            if half and not last < first:                      # needs at least 2 logged losses to compare
                 fails.append(f"loss not falling ({first:.3f} -> {last:.3f})")
             if any(w.startswith("error") for _, _, w, _ in fmt):
                 fails.append("generation errors")
