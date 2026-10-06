@@ -173,6 +173,60 @@ def main():
     for a in rng.sample(looks, min(len(looks), TARGET["look"])):
         add("look", [f"What symbols does the legend on sheet {a['sheet_id']} list?"], {"contains": a["legend"][:2], "first_tool": "look"})
 
+    # the rest of the sheet: gradients, transitions, km posts, sheet info, notes, printed text, beyond the sheets read
+    L = idx["L"]
+    test_cols = rng.sample(cols, min(len(cols), 40))
+    n = 0
+    for line, ch in test_cols:
+        r = tools.query("gradient", line=line, chainage=round(ch + 7.5, 1))
+        m = re.search(r"1 in (\d+)", r.get("gradient") or "")
+        if "error" in r or not m or n >= 8:
+            continue
+        add("gradient", [rng.choice([f"{line}: what's the grade at CH {ch + 7.5:.1f}?", f"Which gradient applies at chainage {ch + 7.5:.1f} on the {line}?"])],
+            {"contains": [m.group(1)], "any_of": ["rising", "falling", "level", "rise", "fall"], "first_tool": "query"})
+        n += 1
+    tps = [(line, t) for line, d in L["tp"].items() for t in d.values() if t["sheet_id"] in test_sids]
+    for line, t in rng.sample(tps, min(len(tps), 8)):
+        x = round(t["chainage_m"] + rng.choice([-1, 1]) * rng.uniform(3, 25), 1)
+        r = tools.query("transition", line=line, chainage=x)
+        if "error" in r:
+            continue
+        key = "transition" if "transition" in r["zone"] else "circular" if "circular" in r["zone"] else "straight"
+        add("transition", [f"At CH {x} on the {line}, is the track straight, in a transition or on the circular curve?"],
+            {"contains": [key], "first_tool": "query"})
+    n = 0
+    for line, ch in test_cols:
+        r = tools.query("km_post", line=line, chainage=round(ch + 11, 1))
+        p = (r or {}).get("previous_km_post") if isinstance(r, dict) else None
+        if not p or not p.get("km") or n >= 6:
+            continue
+        add("km_post", [f"Nearest km post before chainage {ch + 11:.0f} on the {line}?"], {"contains": [str(p["km"]).split(".")[0].split("+")[0]], "first_tool": "query"})
+        n += 1
+    for sid in rng.sample(sorted(test_sids), min(len(test_sids), 6)):
+        info = L["info"][sid]
+        if info.get("drawing_no"):
+            add("sheet_info", [f"Drawing no. of sheet {sid}?"], {"contains": [info["drawing_no"]], "first_tool": "query"})
+    n = 0
+    for sid in rng.sample(sorted(test_sids), len(test_sids)):
+        for topic in ("rail level", "ruling gradient", "dimensions"):
+            hits = [x for x in L["notes"].get(sid, []) if topic in x["text"].lower()]
+            if hits and n < 8:
+                frag = " ".join(hits[0]["text"].split()[:4]).lower()
+                add("notes", [f"Anything in the notes of sheet {sid} about {topic}?"], {"contains": [frag], "first_tool": "query"})
+                n += 1
+                break
+    words = sorted({x for s, x, ar in L["text"] if s in test_sids and ar in ("alignment plan", "lsection profile")
+                    and re.fullmatch(r"[A-Z][A-Z .&/()-]{5,28}", x) and len(x.split()) <= 4 and not re.search(r"\b(STN|STATION)\b", x)})
+    for w in rng.sample(words, min(len(words), 6)):
+        r = tools.query("text", term=w.lower())
+        add("text", [f"On which sheet is \"{w.title()}\" printed?"], {"contains": [r["matches"][0]["sheet_id"]], "first_tool": "query"})
+    for line in ("3rd line", "4th line"):
+        hi = max(h for lo, h, s in idx["sheets"][line])
+        for _ in range(3 if line == "3rd line" else 2):
+            x = round(hi + rng.uniform(5000, 50000), 1)
+            add("outside", [f"Ground level at CH {x} on the {line}?"],
+                {"any_of": ["not covered", "no sheet", "not been read", "not read", "not on any", "no " + line + " sheet"]})
+
     # line-of-second check is informative only; keep items whose bridge exists on that line
     items = [it for it in items if it["situation"] != "follow_up" or True]
     for i, it in enumerate(items):

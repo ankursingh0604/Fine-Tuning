@@ -19,7 +19,7 @@ import store as S          # noqa: E402
 import tools as T          # noqa: E402
 
 SCENARIO = {"agent_upload_quality", "agent_new_version", "agent_versions", "agent_unreadable", "agent_layout_unknown",
-            "agent_page_types", "agent_term_web", "agent_reupload"}
+            "agent_page_types", "agent_term_web", "agent_reupload", "agent_gap_column"}
 
 
 def main():

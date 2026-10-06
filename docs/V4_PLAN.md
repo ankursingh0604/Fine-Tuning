@@ -423,8 +423,17 @@ read, not from model reasoning.
   and printed label protected and checked; validation and test keep their wording). A local open model can add
   richer variants through `data/v4/paraphrase_cache.json`, which the script uses when present.
   Whole pipeline: `scripts/build_v4_all.py`. CPU check: all passed, 46,231 rows kept at max length 3072.
-- **Phase 4 built**: `data/v4/benchmark/benchmark_v4.jsonl` (281 questions from held-back sheets and the held-back
-  PDF, per situation), scored by `assistant_v4/run_benchmark.py` (self-test: perfect model 281/281, useless 0).
+- **Phase 4 built**: `data/v4/benchmark/benchmark_v4.jsonl` (328 questions from held-back sheets and the held-back
+  PDF, per situation), scored by `assistant_v4/run_benchmark.py` (self-test: perfect model 328/328, useless 0).
+- **Audit before training (2026-10-06)** closed the gaps against this plan:
+  - Full coverage in the assistant: `query` now also answers gradients (between grade points), grade points, whether
+    a chainage is on a straight / transition / curve (ST-TC-CT-TS), km posts (with the existing-line km), stations,
+    sheet information (drawing no., scale, date, revision, previous/next sheet, reference drawings), notes (by number
+    or topic) and a search of every printed word (`scripts/lookups_v4.py`, shared by the tools and the training data).
+  - Two situations added: a neighbouring band column unreadable (no interpolation across the gap) and a chainage
+    beyond the sheets read (said so, nothing estimated).
+  - "None" no longer appears in any training answer (the generator now refuses to write one); conversations touching a
+    held-out sheet move to that sheet's split. Replay: all 7,463 tool calls identical to the runtime.
 
 ## Targets (aims, to be measured)
 

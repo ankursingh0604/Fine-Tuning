@@ -19,7 +19,7 @@ DS = ROOT / "data" / "v4" / "dataset"
 OUT = KIT / "bundle_v4.zip"
 APP_CODE = ["assistant_v4/agent.py", "assistant_v4/store.py", "assistant_v4/tools.py", "assistant_v4/run_benchmark.py",
             "scripts/annotate.py", "scripts/annotate_v4.py", "scripts/agent_conversations_v4.py", "scripts/build_dataset.py",
-            "scripts/build_dataset_v4.py", "scripts/build_reasoning.py", "scripts/qwen35_format.py",
+            "scripts/build_dataset_v4.py", "scripts/build_reasoning.py", "scripts/qwen35_format.py", "scripts/lookups_v4.py",
             "runpod_v4/data_v4.py", "docs/tools_v4.json", "data/v4/benchmark/benchmark_v4.jsonl"]
 
 

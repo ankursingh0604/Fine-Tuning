@@ -23,7 +23,7 @@
    "type": "function",
    "function": {
     "name": "query",
-    "description": "Look up what was read from the sheets (the store). kind: 'bridge' (one bridge: callout, level block, sheet), 'bridges_in_range' (bridges between two chainages, with levels), 'sheet_for_chainage' (which sheet covers a chainage), 'curve' (one curve box), 'notes' (a sheet's general notes), 'abbreviation' (meaning of a term from the sheets' abbreviation tables), 'tbm' (one bench mark), 'versions' (every stored version of a sheet: revision, file, date; the latest is used by default), 'bridges_on_sheet' (all bridges of one sheet with levels, for schedules and reports).",
+    "description": "Look up what was read from the sheets (the store). kind: 'bridge' (one bridge: callout, level block, sheet), 'bridges_in_range' (bridges between two chainages, with levels), 'sheet_for_chainage' (which sheet covers a chainage), 'curve' (one curve box), 'notes' (a sheet's general notes; optional term to find the note about something), 'abbreviation' (meaning of a term from the sheets' abbreviation tables), 'tbm' (one bench mark), 'versions' (every stored version of a sheet: revision, file, date; the latest is used by default), 'bridges_on_sheet' (all bridges of one sheet with levels, for schedules and reports), 'gradient' (the proposed gradient at a chainage, between its two grade points), 'grade_points' (grade points with FL and gradients before/after, between two chainages or on a sheet), 'transition' (whether a chainage is on a straight, transition or circular curve, with the ST/TC/CT/TS points either side), 'km_post' (the km posts either side of a chainage, with the existing-line km), 'stations' (stations named on the sheets of a line), 'sheet_info' (drawing number, sheet number, chainage range, scale, date, revision, previous/next sheet, reference drawings), 'text' (search every word printed on the sheets for a word or phrase: where it is printed).",
     "parameters": {
      "type": "object",
      "properties": {
@@ -38,7 +38,14 @@
         "abbreviation",
         "tbm",
         "versions",
-        "bridges_on_sheet"
+        "bridges_on_sheet",
+        "gradient",
+        "grade_points",
+        "transition",
+        "km_post",
+        "stations",
+        "sheet_info",
+        "text"
        ]
       },
       "line": {

@@ -15,7 +15,7 @@ What happens:
  4. One epoch, hard step cap; validation and a checkpoint every ~10 % of the epoch; the best checkpoint is kept;
     early stop after 3 validations without improvement.
  5. Adapter saved (adapter/, adapter.zip), then the test sets are scored (eval/).
- 6. The benchmark (281 questions through the assistant loop and its tools, app/ in the bundle) -> benchmark/.
+ 6. The benchmark (328 questions through the assistant loop and its tools, app/ in the bundle) -> benchmark/.
 """
 import argparse
 import json
@@ -255,7 +255,7 @@ def main():
 
 
 def benchmark(model, processor, out):
-    """The 281-question benchmark through the assistant loop and tools (app/ in the bundle), with the model in memory.
+    """The 328-question benchmark through the assistant loop and tools (app/ in the bundle), with the model in memory.
     A failure here is logged and does not lose anything: the adapter and eval/ are already saved."""
     app = HERE / "app" / "assistant_v4"
     if not app.exists():
@@ -265,7 +265,7 @@ def benchmark(model, processor, out):
         sys.path.insert(0, str(app))
         import agent as AG
         import run_benchmark as RB
-        log("benchmark: 281 questions through the assistant and its tools ...", out)
+        log("benchmark: 328 questions through the assistant and its tools ...", out)
         RB.run(AG.TransformersModel(model=model, processor=processor), "v4", log=lambda m: log(m, out), out=out / "benchmark")
     except Exception as e:                       # noqa: BLE001
         log(f"benchmark failed ({type(e).__name__}: {e}); run it again with: python app/assistant_v4/run_benchmark.py "

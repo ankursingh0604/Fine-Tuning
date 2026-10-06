@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from store import Store, km, line_of, sha_of     # noqa: E402
+import lookups_v4 as LK                           # noqa: E402
 
 INTERP = ["cut_fill", "fl_difference", "prop_rl", "prop_fl", "track_distance", "exg_up_fl", "ground_level"]
 
@@ -113,6 +114,7 @@ class Tools:
                 idx["tbms"][t["tbm_id"]] = {**{k: t[k] for k in ("tbm_id", "chainage_m", "easting", "northing", "msl_m", "description")},
                                             "sheet_id": sid}
         idx["xs"] = {line: sorted(cols) for line, cols in idx["cols"].items()}
+        idx["L"] = LK.build([(sid, a, line_of(a)) for sid, (a, ver) in latest.items()])
         self._index = (id(latest), idx)
         return idx
 
@@ -151,9 +153,9 @@ class Tools:
             return c or {"error": f"curve {curve_no} not found on the {line}"}
         if kind == "tbm":
             return idx["tbms"].get(tbm_id) or {"error": f"{tbm_id} not found"}
-        if kind == "notes":
-            a = idx["ann"].get(sheet_id)
-            return [{"no": n["no"], "text": n["text"]} for n in a["notes"]] if a else {"error": f"sheet {sheet_id} not found"}
+        if kind in LK.KINDS:                     # gradients, grade points, transitions, km posts, stations, sheet info, notes, text
+            return LK.lookup(idx["L"], kind, line=line, chainage=chainage, chainage_from=chainage_from, chainage_to=chainage_to,
+                             sheet_id=sheet_id, sheet_no=sheet_no, term=term)
         if kind == "abbreviation":
             sheets = [sheet_id] if sheet_id else sorted(idx["ann"])
             for sid in sheets:

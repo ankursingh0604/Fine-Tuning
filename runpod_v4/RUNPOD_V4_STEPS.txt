@@ -12,7 +12,7 @@ A. ON THE LAPTOP (free, before renting)
   3. Pack the bundle (~1.6 GB; delete the old bundle_v4.zip first if the disk is short):
         .venv\Scripts\python runpod_v4\make_bundle_v4.py
      -> runpod_v4\bundle_v4.zip (dataset + images, the training kit, and app/: the assistant, its tools,
-        the annotations, the PDFs and the 281-question benchmark)
+        the annotations, the PDFs and the 328-question benchmark)
 
 B. ON RUNPOD
   4. Top up the balance: about $35-40 (the run plus a margin).
@@ -44,8 +44,8 @@ B. ON RUNPOD
      stops improving 3 times in a row.
  12. If the pod restarts: start a pod with the same volume, then
         cd /workspace/v4 && bash run_v4.sh --price 1.09 --resume
- 13. After the epoch it saves the adapter, scores the test sets (eval/), then runs the benchmark: 281 questions
-     through the assistant and its tools (progress.log shows "benchmark n/281 ... min left"; roughly 2-5 h, about
+ 13. After the epoch it saves the adapter, scores the test sets (eval/), then runs the benchmark: 328 questions
+     through the assistant and its tools (progress.log shows "benchmark n/328 ... min left"; roughly 2-5 h, about
      $2-6 - the first lines give the real estimate). To skip it, start with --no-benchmark; to run it later:
         cd /workspace/v4 && source /workspace/venv4/bin/activate && export HF_HOME=/workspace/hf
         python app/assistant_v4/run_benchmark.py --adapter /workspace/v4_run/adapter --out /workspace/v4_run/benchmark

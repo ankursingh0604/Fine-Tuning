@@ -6,7 +6,10 @@ Each conversation: system prompt, user turn(s), assistant turns that call tools 
 computed from the store of all annotated sheets, and the final answer. Situations (V4_PLAN.md, situation awareness
 and reasoning rules): single lookups, interpolated band values, MIN FL checks, multi-step range questions, follow-ups,
 ambiguous requests (asking back), bridges not found, values not printed, the rail-level check, curves, TBMs, which
-sheet covers a chainage, unfamiliar terms (own guess, then confirm), and out-of-scope engineering decisions.
+sheet covers a chainage, unfamiliar terms (own guess, then confirm), and out-of-scope engineering decisions; plus
+the rest of the sheet through the store (gradients, grade points, transitions, km posts, stations, sheet information,
+notes, printed text), a neighbouring band column unreadable (no interpolation across the gap) and a chainage beyond
+the sheets read. No assistant answer may contain "None" (checked at the end).
 Assistant turns carry "reasoning" only where the reasoning rules call for thinking.
 
 Writes data/v4/dataset/agent_{train,val,test}.jsonl, split by the sheet the conversation is about.
@@ -22,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_dataset as D           # noqa: E402
 import build_dataset_v4 as V        # noqa: E402
+import lookups_v4 as LK             # noqa: E402
 
 DS = ROOT / "data" / "v4" / "dataset"
 TOOLS = json.loads((ROOT / "docs" / "tools_v4.json").read_text(encoding="utf-8"))["tools"]
@@ -108,6 +112,11 @@ class Store:
         for line in self.cols:
             self.sorted_cols = getattr(self, "sorted_cols", {})
             self.sorted_cols[line] = sorted(self.cols[line])
+        # gradients, grade points, transitions, km posts, stations, sheet info, notes, printed text (same code as the runtime)
+        self.L = LK.build([(a["sheet_id"], a, line_of(a)) for a in anns])
+
+    def lookup(self, kind, **kw):
+        return LK.lookup(self.L, kind, **kw)
 
     def band_at(self, line, ch):
         xs = self.sorted_cols.get(line, [])
@@ -368,9 +377,12 @@ def curve(S, line, c):
     k = rng.choice(["radius", "transition_length", "cant", "max_speed", "total_tangent_length", "deflection_angle"])
     words = {"radius": "radius", "transition_length": "transition length", "cant": "cant", "max_speed": "maximum speed",
              "total_tangent_length": "total tangent length", "deflection_angle": "deflection angle"}
+    where = ", ".join(x for x in (line, f"sheet {c['sheet_id']}", c.get("hand")) if x)
+    value = (f"{words[k]} {c[k]}." if c.get(k) is not None else
+             f"the curve box does not give its {words[k]} (not printed on the sheet).")
     msgs = [user(f"What is the {words[k]} of curve no. {c['curve_no']} on the {line}?"),
             call("query", {"kind": "curve", "line": line, "curve_no": c["curve_no"]}), result("query", c),
-            say(f"Curve no. {c['curve_no']} ({line}, sheet {c['sheet_id']}, {c['hand']}): {words[k]} {c[k]}.")]
+            say(f"Curve no. {c['curve_no']} ({where}): {value}")]
     return conv("agent_curve", c["sheet_id"], msgs, False)
 
 
@@ -483,7 +495,10 @@ def upload_reply(res):
     lines_ = sorted({p["line"] for p in ls if p.get("line")})
     head = f"{res['file']}: {len(pages)} page{'s' if len(pages) != 1 else ''}, {len(ls)} L-section sheet{'s' if len(ls) != 1 else ''}"
     if ls:
-        head += f" ({ls[0]['sheet_id']} to {ls[-1]['sheet_id']}), {', '.join(lines_)}, CH {ls[0]['chainage_from']} to {ls[-1]['chainage_to']}"
+        ch_from = next((p["chainage_from"] for p in ls if p.get("chainage_from")), None)
+        ch_to = next((p["chainage_to"] for p in reversed(ls) if p.get("chainage_to")), None)
+        rng_txt = f", CH {ch_from} to {ch_to}" if ch_from and ch_to else f", from CH {ch_from}" if ch_from else ""
+        head += f" ({ls[0]['sheet_id']} to {ls[-1]['sheet_id']}), {', '.join(lines_)}{rng_txt}"
         head += ". Read exactly from the PDF's text layer." if all(p["read_by"].startswith("PDF") for p in ls) else "."
     out = [head]
     for p in other:
@@ -658,8 +673,11 @@ def look_panel(S, a):
         obj = {"text": [f"{r.get('rev')} | {r.get('date')} | prepared by {r.get('prepared_by')} | checked by {r.get('checked_by')} | "
                         f"approved by {r.get('approved_by')}" for r in rec]}
         reply = f"Issue record of sheet {sid}: " + "; ".join(
-            f"{r.get('rev')} dated {r.get('date')}, prepared by {r.get('prepared_by')}, checked by {r.get('checked_by')}, "
-            f"approved by {r.get('approved_by')}" for r in rec) + "."
+            ", ".join(x for x in (f"{r.get('rev')}" + (f" dated {r['date']}" if r.get("date") else ""),
+                                  f"prepared by {r['prepared_by']}" if r.get("prepared_by") else None,
+                                  f"checked by {r['checked_by']}" if r.get("checked_by") else None,
+                                  f"approved by {r['approved_by']}" if r.get("approved_by") else None) if x)
+            for r in rec) + "."
     msgs = [user(f"What does the {what} on sheet {sid} say?"),
             call("look", {"sheet_id": sid, "area": f"right-hand panel, {what}", "question": f"Read the {what} as printed."}),
             result("look", obj), say(reply)]
@@ -704,6 +722,258 @@ def report(S, a):
             call("query", {"kind": "bridges_on_sheet", "sheet_id": sid}), result("query", bs),
             say(f"Bridges on sheet {sid} ({line}):\n\n" + "\n".join(rows) + ("\n\n" + "\n".join(flags) if flags else ""))]
     return conv("agent_report", sid, msgs, False)
+
+# ---------------------------------------------------------------- the rest of the sheet: gradients, km posts, notes, text ...
+
+def gradient_q(S, line, ch):
+    res = S.lookup("gradient", line=line, chainage=ch)
+    if "error" in res or not res.get("gradient"):
+        return None
+    a, b = res["from_grade_point"], res["to_grade_point"]
+    q = rng.choice([f"What is the gradient at CH {chs(ch)} on the {line}?", f"Is the {line} rising or falling at CH {chs(ch)}?",
+                    f"What gradient is the proposed {line} on at CH {chs(ch)}?"])
+    ans = (f"At CH {chs(ch)} the proposed {line} is on a gradient of {res['gradient']}"
+           + (f" (printed '{res['printed_as']}')" if res.get("printed_as") else "")
+           + f", between the grade points at CH {chs(a['chainage_m'])}" + (f" (FL {f3(a['fl'])})" if a.get("fl") is not None else "")
+           + f" and CH {chs(b['chainage_m'])}" + (f" (FL {f3(b['fl'])})" if b.get("fl") is not None else "") + f" - sheet {res['sheet_id']}.")
+    return conv("agent_gradient", res["sheet_id"],
+                [user(q), call("query", {"kind": "gradient", "line": line, "chainage": ch}), result("query", res), say(ans)], False)
+
+
+def grade_points_q(S, line, lo, hi):
+    res = S.lookup("grade_points", line=line, chainage_from=lo, chainage_to=hi)
+    if isinstance(res, dict) or len(res) < 2:
+        return None
+    rows = ["| Grade point | FL | Gradient before | Gradient after | Sheet |", "|---|---|---|---|---|"]
+    rows += [f"| CH {chs(g['chainage_m'])} | {f3(g['fl']) if g['fl'] is not None else '-'} | {g['gradient_before'] or '-'} | "
+             f"{g['gradient_after'] or '-'} | {g['sheet_id']} |" for g in res]
+    q = rng.choice([f"List the grade points between CH {chs(lo)} and CH {chs(hi)} on the {line}.",
+                    f"Where does the gradient change between CH {chs(lo)} and CH {chs(hi)} on the {line}?"])
+    return conv("agent_grade_points", res[0]["sheet_id"],
+                [user(q), call("query", {"kind": "grade_points", "line": line, "chainage_from": lo, "chainage_to": hi}), result("query", res),
+                 say(f"Grade points on the proposed {line} between CH {chs(lo)} and CH {chs(hi)}:\n\n" + "\n".join(rows))], False)
+
+
+def transition_q(S, line, ch):
+    res = S.lookup("transition", line=line, chainage=ch)
+    if "error" in res:
+        return None
+
+    def pt(p):
+        s = f"{p['type']} at CH {chs(p['chainage_m'])}"
+        return s + (f" (printed as {p['printed_as']})" if p.get("printed_as") and p["printed_as"] != p["type"] else "")
+    parts = (["after " + pt(res["previous_point"])] if res["previous_point"] else []) + (["before " + pt(res["next_point"])] if res["next_point"] else [])
+    sid = (res["previous_point"] or res["next_point"])["sheet_id"]
+    q = rng.choice([f"Is CH {chs(ch)} on a curve on the {line}?", f"Is CH {chs(ch)} on the {line} on a straight, a transition or the curve?"])
+    ans = f"CH {chs(ch)} on the {line} is on the {res['zone']}: " + " and ".join(parts) + f" (sheet {sid})."
+    return conv("agent_transition", sid, [user(q), call("query", {"kind": "transition", "line": line, "chainage": ch}),
+                                         result("query", res), say(ans)], False)
+
+
+def km_post_q(S, line, ch):
+    res = S.lookup("km_post", line=line, chainage=ch)
+    if "error" in res or not (res["previous_km_post"] or res["next_km_post"]):
+        return None
+
+    def kp(k):
+        return f"km {k['km']} at CH {chs(k['chainage_m'])}" + (f" (existing-line km {k['existing_km']})" if k.get("existing_km") else "") + f", sheet {k['sheet_id']}"
+    parts = ([f"before it {kp(res['previous_km_post'])}"] if res["previous_km_post"] else []) + \
+            ([f"after it {kp(res['next_km_post'])}"] if res["next_km_post"] else [])
+    q = rng.choice([f"Which km posts are near CH {chs(ch)} on the {line}?", f"What is the existing-line km near CH {chs(ch)} on the {line}?",
+                    f"Between which km posts is CH {chs(ch)} on the {line}?"])
+    sid = (res["previous_km_post"] or res["next_km_post"])["sheet_id"]
+    return conv("agent_km_post", sid, [user(q), call("query", {"kind": "km_post", "line": line, "chainage": ch}), result("query", res),
+                                      say(f"Around CH {chs(ch)} on the {line}: " + "; ".join(parts) + ".")], False)
+
+
+def stations_q(S, line):
+    res = S.lookup("stations", line=line)
+    if isinstance(res, dict):
+        return None
+    names = "; ".join(f"{s['name']} (shown at the {s['direction']} end of sheet {s['sheet_id']})" if s.get("direction")
+                      else f"{s['name']} (sheet {s['sheet_id']})" for s in res)
+    q = rng.choice([f"Which stations are named on the {line} sheets?", f"List the stations shown on the {line} drawings."])
+    return conv("agent_stations", res[0]["sheet_id"], [user(q), call("query", {"kind": "stations", "line": line}), result("query", res),
+                                                      say(f"Stations named on the {line} sheets read so far: {names}.")], False)
+
+
+def sheet_info_q(S, sid, unique):
+    info = S.L["info"][sid]
+    line = info["line"]
+    fields = [f for f in ("drawing_no", "scale", "date", "revision", "chainage", "neighbours", "reference_drawings", "year_of_survey")
+              if (f == "chainage" and info["chainage_from"] and info["chainage_to"]) or (f == "neighbours" and (info["previous_sheet"] or info["next_sheet"]))
+              or (f == "reference_drawings") or info.get(f)]
+    f = rng.choice(fields)
+    no = info["sheet_no"]
+    ask = {"drawing_no": "the drawing number of", "scale": "the scale of", "date": "the date on", "revision": "the latest revision of",
+           "chainage": "the chainage range of", "neighbours": "the previous and next sheets of", "reference_drawings": "the reference drawings on",
+           "year_of_survey": "the year of survey on"}[f]
+    who = f"sheet {no} on the {line}" if unique else f"sheet {sid}"
+    args = {"kind": "sheet_info", "line": line, "sheet_no": no} if unique else {"kind": "sheet_info", "sheet_id": sid}
+    val = {"drawing_no": f"drawing number {info['drawing_no']}", "scale": f"scale {info['scale']}", "date": f"dated {info['date']}",
+           "revision": f"revision {info['revision']}" + (f" (dated {info['revision_date']})" if info.get("revision_date") else ""),
+           "chainage": f"covers CH {info['chainage_from']} to CH {info['chainage_to']}",
+           "neighbours": ", ".join(x for x in (f"previous sheet {info['previous_sheet']}" if info["previous_sheet"] else None,
+                                               f"next sheet {info['next_sheet']}" if info["next_sheet"] else None) if x),
+           "reference_drawings": ("reference drawings: " + "; ".join(info["reference_drawings"])) if info["reference_drawings"]
+           else "no reference drawings are listed", "year_of_survey": f"year of survey {info['year_of_survey']}"}[f]
+    return conv("agent_sheet_info", sid, [user(f"What is {ask} {who}?"), call("query", args), result("query", info),
+                                         say(f"Sheet {no} ({line}, {sid}): {val}.")], False)
+
+
+NOTE_TOPICS = ["rail level", "ruling gradient", "chainage", "dimensions", "curve", "bridge", "levels", "track centre", "formation",
+               "gradient", "cant", "speed", "existing", "survey", "datum", "bench mark"]
+
+
+def notes_q(S, sid, mode):
+    ns = S.L["notes"].get(sid) or []
+    line = S.sheet_line.get(sid)
+    if not ns or not line:
+        return None
+    if mode == "number":
+        n = rng.choice(ns)
+        res = S.lookup("notes", sheet_id=sid)
+        return conv("agent_notes", sid, [user(rng.choice([f"What does note {n['no']} on sheet {sid} say?", f"Read note {n['no']} of sheet {sid}."])),
+                                        call("query", {"kind": "notes", "sheet_id": sid}), result("query", res),
+                                        say(f"Note {n['no']} on sheet {sid}: {n['text']}")], False)
+    topics = [t for t in NOTE_TOPICS if any(t in n["text"].lower() for n in ns)]
+    if not topics:
+        return None
+    t = rng.choice(topics)
+    res = S.lookup("notes", sheet_id=sid, term=t)
+    quote = " ".join(f"Note {n['no']}: {n['text']}" for n in res[:3]) + (f" (and {len(res) - 3} more)" if len(res) > 3 else "")
+    if mode == "topic":
+        return conv("agent_notes", sid, [user(f"What do the notes on sheet {sid} say about the {t}?"),
+                                        call("query", {"kind": "notes", "sheet_id": sid, "term": t}), result("query", res),
+                                        say(f"On sheet {sid}: {quote}")], False)
+    # via a chainage: find the sheet first, then its notes (two steps)
+    span = next((x for x in S.sheets[line] if x[2] == sid), None)
+    if not span or span[1] - span[0] < 200:                 # sheet without a readable chainage range
+        return None
+    ch = round(rng.uniform(span[0] + 50, span[1] - 50), 1)
+    sids = S.sheet_for(line, ch)
+    if sids != [sid]:
+        return None
+    return conv("agent_notes", sid, [user(f"What do the notes say about the {t} for CH {chs(ch)} on the {line}?"),
+                                    call("query", {"kind": "sheet_for_chainage", "line": line, "chainage": ch},
+                                         f"Find the sheet covering CH {chs(ch)}, then search its notes for '{t}'."),
+                                    result("query", sids), call("query", {"kind": "notes", "sheet_id": sid, "term": t}), result("query", res),
+                                    say(f"CH {chs(ch)} is on sheet {sid}. Its notes on the {t}: {quote}")], True)
+
+
+TEXT_AREAS = ("alignment plan", "lsection profile")
+NOT_PRINTED = ["BANK HEIGHT", "SUBGRADE LEVEL", "FLYOVER", "TUNNEL", "VIADUCT", "RETAINING WALL", "SIGNAL CABIN", "CATCH WATER DRAIN"]
+
+
+def text_q(S, sid, negative=False):
+    if negative:
+        t = rng.choice(NOT_PRINTED)
+        res = LK.lookup(S.L, "text", term=t.lower())
+        if "error" not in res:
+            return None
+        return conv("agent_text", sid, [user(f"Is '{t.lower()}' written anywhere on the sheets?"), call("query", {"kind": "text", "term": t.lower()}),
+                                       result("query", res), say(f"No - '{t.lower()}' is not printed on any sheet read so far.")], False)
+    cands = [x for s, x, ar in S.L["text"] if s == sid and ar in TEXT_AREAS and re.fullmatch(r"[A-Z][A-Z .&/()-]{5,28}", x)
+             and not re.search(r"\b(STN|STATION)\b", x) and len(x.split()) <= 4]
+    if not cands:
+        return None
+    t = rng.choice(cands).strip()
+    on_sheet = rng.random() < 0.5
+    res = LK.lookup(S.L, "text", term=t, sheet_id=sid if on_sheet else None)
+    if "error" in res:
+        return None
+    where = "; ".join(f"sheet {m['sheet_id']}, {m['area']}: \"{m['text']}\"" for m in res["matches"][:5])
+    more = f" ({res['total'] - 5} more places not listed)" if res["total"] > 5 else ""
+    q = f"Where does it say '{t.lower()}' on sheet {sid}?" if on_sheet else f"Where is '{t.lower()}' written on the drawings?"
+    args = {"kind": "text", "term": t.lower(), **({"sheet_id": sid} if on_sheet else {})}
+    return conv("agent_text", sid, [user(q), call("query", args), result("query", res),
+                                   say(f"'{t.lower()}' is printed {res['total']} time{'s' if res['total'] != 1 else ''}: {where}{more}.")], False)
+
+
+def gap_column(S, a):
+    """Labelled scenario (vector PDFs almost never have one): a sheet read from a 75 dpi image where one band column could
+    not be read. A value next to it must not be interpolated across the gap."""
+    sid = a["sheet_id"]
+    line = S.sheet_line.get(sid)
+    cols = sorted(c["chainage"] for c in ((a.get("bands") or {}).get("columns", []) if isinstance(a.get("bands"), dict) else []) if c["checks_ok"])
+    inner = [x for x in cols[1:-1] if x - 20 in cols and x + 20 in cols]
+    if not line or not inner:
+        return None
+    x = rng.choice(inner)
+    ch = round(x + rng.choice([-1, 1]) * rng.uniform(2, 18), 1)
+    page = page_summary(S, a)
+    page.update({"page": 1, "read_by": "image + model", "dpi": 75,
+                 "warnings": [f"the band column at CH {chs(x)} could not be read (digits unreadable at 75 dpi); it was left out, not guessed"]})
+    page["read"]["band_columns"] -= 1
+    fname = f"sheet_{a['sheet_info'].get('sheet_no')}_75dpi.png"
+    k = rng.choice(list(BAND_ASK))
+    return conv("agent_gap_column", sid, [
+        user(f"I have uploaded {fname}. What is the {BAND_ASK[k]} at CH {chs(ch)}?"),
+        call("read_sheet", {"file": fname}), result("read_sheet", {"file": fname, "pages": [page], "continuity": {"checked_pairs": 0, "issues": []}}),
+        call("band_at", {"line": line, "chainages": [ch]}),
+        result("band_at", [{"chainage": ch, "error": "a printed column between them could not be read; not interpolated"}]),
+        say(f"I can't give the {BAND_WORD[k]} at CH {chs(ch)} ({line}, sheet {sid}): the band column next to it, at CH {chs(x)}, could not be "
+            f"read on this 75 dpi image, so I will not interpolate across that gap. A 150-300 dpi image or the PDF would give it exactly.",
+            "A neighbouring column could not be read: no interpolation across the gap; say why.")], True)
+
+
+def outside_store(S, line):
+    """A chainage beyond every sheet read so far: say so; never estimate."""
+    spans = S.sheets[line]
+    if not spans:
+        return None
+    lo, hi = min(s[0] for s in spans), max(s[1] for s in spans)
+    ch = round(hi + rng.uniform(3000, 40000), 1) if rng.random() < 0.6 else round(lo - rng.uniform(3000, 40000), 1)
+    near = max(spans, key=lambda s: s[1])[2] if ch > hi else min(spans, key=lambda s: s[0])[2]
+    if rng.random() < 0.5:
+        k = rng.choice(list(BAND_ASK))
+        ba = S.band_at(line, ch)
+        msgs = [user(f"What is the {BAND_ASK[k]} at CH {chs(ch)} on the {line}?"),
+                call("band_at", {"line": line, "chainages": [ch]}), result("band_at", [ba]),
+                call("query", {"kind": "sheet_for_chainage", "line": line, "chainage": ch}), result("query", []),
+                say(f"CH {chs(ch)} is not covered by any {line} sheet that has been read, so I have no band values there and will not "
+                    f"estimate them. Upload the sheet that covers it and I will read it.")]
+    else:
+        msgs = [user(f"Which sheet covers CH {chs(ch)} on the {line}?"),
+                call("query", {"kind": "sheet_for_chainage", "line": line, "chainage": ch}), result("query", []),
+                say(f"No {line} sheet read so far covers CH {chs(ch)}. If you upload the sheet for that stretch, I will read it.")]
+    return conv("agent_outside", near, msgs, False)
+
+
+def extra_conversations(S, split_of):
+    convs = []
+    for line in sorted(S.sheets):
+        xs = S.sorted_cols.get(line, [])
+        for ch in rng.sample(xs, min(80, len(xs))):
+            convs.append(gradient_q(S, line, round(ch + rng.uniform(0, 19), 1)))
+        gps = sorted(S.L["gp"].get(line, {}))
+        for i in rng.sample(range(max(0, len(gps) - 3)), min(30, max(0, len(gps) - 3))):
+            convs.append(grade_points_q(S, line, round(gps[i] - rng.uniform(10, 200)), round(gps[i + 2] + rng.uniform(10, 200))))
+        tps = sorted(S.L["tp"].get(line, {}).values(), key=lambda t: t["chainage_m"])
+        for t in rng.sample(tps, min(80, len(tps))):
+            convs.append(transition_q(S, line, round(t["chainage_m"] + rng.uniform(-300, 300), 1)))
+        for ch in rng.sample(xs, min(60, len(xs))):
+            convs.append(km_post_q(S, line, round(ch + rng.uniform(0, 19), 1)))
+        for _ in range(2):
+            convs.append(stations_q(S, line))
+        for _ in range(25):
+            convs.append(outside_store(S, line))
+    keys = Counter((i["line"], str(i["sheet_no"])) for i in S.L["info"].values())
+    for sid in sorted(S.sheet_line):
+        info = S.L["info"][sid]
+        if rng.random() < 0.7:
+            convs.append(sheet_info_q(S, sid, keys[(info["line"], str(info["sheet_no"]))] == 1))
+        convs.append(notes_q(S, sid, rng.choice(["number", "topic"])))
+        if rng.random() < 0.5:
+            convs.append(notes_q(S, sid, "chainage"))
+        if rng.random() < 0.8:
+            convs.append(text_q(S, sid))
+        if rng.random() < 0.2:
+            convs.append(text_q(S, sid, negative=True))
+        if rng.random() < 0.35:
+            convs.append(gap_column(S, S.sheet_ann[sid]))
+    return [c for c in convs if c]
+
 
 # ---------------------------------------------------------------- main
 
@@ -804,11 +1074,25 @@ def main():
                 c = fn(S, a)
                 if c:
                     convs.append(c)
+    convs += extra_conversations(S, split_of)
     out = defaultdict(list)
+    moved = 0
     for i, c in enumerate(convs):
         c["id"] = f"agent_{i:05d}"
         c["split"] = c.pop("force_split", None) or split_of.get(c["sheet"], "train")
+        # a conversation that touches a held-out sheet anywhere (e.g. a chainage range across sheets) goes to the
+        # strictest split of the sheets it mentions, so no validation or test sheet's values are trained on
+        mentioned = {s for s in re.findall(r"MKN-(?:3RD|4TH)_\d+", json.dumps(c["messages"])) if s in split_of}
+        strictest = max([c["split"]] + [split_of[s] for s in mentioned], key=rank.get)
+        if strictest != c["split"]:
+            c["split"] = strictest
+            moved += 1
         out[c["split"]].append(c)
+    nones = [(c["id"], c["task"], m["content"][:160]) for c in convs for m in c["messages"]
+             if m["role"] == "assistant" and re.search(r"\bNone\b", m.get("content") or "")]
+    if nones:
+        raise SystemExit(f"'None' in {len(nones)} assistant answers, e.g. {nones[:4]}")
+    print(f"moved to a stricter split because they mention a held-out sheet: {moved}")
     for split in ("train", "val", "test"):
         with open(DS / f"agent_{split}.jsonl", "w", encoding="utf-8") as f:
             for c in out[split]:

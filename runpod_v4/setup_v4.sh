@@ -27,7 +27,7 @@ print("torch", torch.__version__, "CUDA", torch.cuda.is_available(), torch.cuda.
 print("GPU memory", round(torch.cuda.get_device_properties(0).total_memory / 1e9), "GB")
 EOF
 
-# the assistant and the benchmark scoring work here (no GPU needed): perfect fake model 281/281, useless 0
+# the assistant and the benchmark scoring work here (no GPU needed): perfect fake model 328/328, useless 0
 python app/assistant_v4/run_benchmark.py --selftest --out /workspace/v4_run/benchmark_selftest | tail -n 1
 
 MODEL="${V4_MODEL:-unsloth/Qwen3.5-27B}"
