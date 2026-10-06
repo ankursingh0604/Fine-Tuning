@@ -16,6 +16,17 @@ Writes, next to --out (default: a folder named after the image):
     <name>_read.json     everything read, including the title block and TBM table
     <name>_overlay.png   the sheet with every bridge the model found (red = flagged or failed a check)
 The image can be 50-200 dpi; 150-200 dpi gives the most reliable numbers.
+
+A PDF works too (--image sheet.pdf, --page N for multi-page files): it is rendered at the resolution where its text is
+as tall as on the trained sheets, whatever the page size.
+
+Anything else printed on the sheet (find_crop.py): a question the list above does not cover, and every gradient /
+grade-point question ("gradient at CH 10046", "slope at 9390"), is answered by finding that text on the sheet, cutting
+a crop there and asking the model. Grade points: the gradient on each side of the stem and the FL, each read from its
+own crop with all other text blanked (so a neighbour's FL is never taken); "not printed" when there is none. For PDFs
+every reading is compared with the PDF's own text. The crops are saved in <out>/crops/.
+    python read_sheet.py --adapter adapter.zip --image sheet.pdf --find-only -q "gradient at CH 10046"
+--find-only skips the whole-sheet reading (minutes) when only such questions are wanted.
 """
 import argparse
 import csv
@@ -67,6 +78,12 @@ class Session:
     def __init__(self, args, model=None):
         self.args, self.model, self.sheet, self.calls = args, model, None, 0
 
+    def ask(self, imgs, q):
+        """The model's answer for crops (used by find_crop.py); the model is loaded on first use."""
+        from app import prepare
+        self.reader()
+        return self.model.ask([prepare(im) for im in imgs], q)
+
     def reader(self):
         if self.model is None:
             if not self.args.adapter:
@@ -115,13 +132,24 @@ def main():
                     help='a question about the sheet, e.g. "ground level at bridge 560"; can be given several times')
     ap.add_argument("--interactive", "-i", action="store_true", help="keep asking questions at a prompt")
     ap.add_argument("--reread", action="store_true", help="read the sheet again even if it was read before")
+    ap.add_argument("--page", type=int, default=1, help="page of a PDF (default 1)")
+    ap.add_argument("--find-only", action="store_true",
+                    help="skip the whole-sheet reading; answer by finding the text and asking about a crop (fast)")
     args = ap.parse_args()
 
     name = Path(args.image).stem
     out = Path(args.out or f"{name}_read")
+    sheet = None
+    if Path(args.image).suffix.lower() == ".pdf":
+        import find_crop
+        sheet = find_crop.open_sheet(args.image, out, args.page - 1)
+        print(sheet.note)
+        args.image = str(sheet.path)               # the rest reads the rendered page, as for any image
     saved = out / f"{name}_read.json"
     session = Session(args)
-    if saved.exists() and not args.reread:
+    if args.find_only:
+        result = {"bridges": [], "findings": [], "title": {}}
+    elif saved.exists() and not args.reread:
         result = json.loads(saved.read_text(encoding="utf-8"))
         print(f"Using the earlier reading of this sheet: {saved}  (--reread to read it again)")
     else:
@@ -131,14 +159,34 @@ def main():
         result.pop("overlay", None)
 
     qa = SheetQA(result, session.band_reader(result))
-    if not args.question and not args.interactive:
+    finder = None
+
+    def get_finder():
+        nonlocal finder, sheet
+        import find_crop
+        if finder is None:                           # built only when needed (for an image: one OCR pass)
+            sheet = sheet or find_crop.open_sheet(args.image, out)
+            finder = find_crop.Finder(sheet, session.ask, out)
+        return finder
+
+    def answer(q):
+        """The fixed question list first; gradients, grade points and anything it does not know: find, crop, ask."""
+        import find_crop
+        if args.find_only or find_crop.Finder.handles(q):
+            return get_finder().answer(q)
+        a = qa.answer(q)
+        if "I did not understand that question" in a or "I could not find that bridge" in a:
+            return get_finder().answer(q)
+        return a
+
+    if not args.question and not args.interactive and not args.find_only:
         print(qa.summary())
         for f in result["findings"]:
             print(f"[{f['severity']}] {f['message']}")
         print('\nAsk about it:  python read_sheet.py --image ' + args.image + ' -q "ground level at bridge 560"   (or -i)')
     for q in args.question:
         print(f"\nQ: {q}")
-        print(qa.answer(q))
+        print(answer(q))
     if args.interactive:
         print("\nAsk about this sheet (help for examples, Enter on an empty line to stop).")
         while True:
@@ -148,7 +196,7 @@ def main():
                 break
             if not q or q.lower() in ("q", "quit", "exit"):
                 break
-            print(qa.answer(q))
+            print(answer(q))
 
 
 if __name__ == "__main__":

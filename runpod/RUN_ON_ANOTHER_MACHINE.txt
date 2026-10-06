@@ -75,6 +75,22 @@ Read a WHOLE sheet image (50-200 dpi)
   Band values that do not add up (FL - GL = cut/fill, RL - FL = 0.762, FL difference) also lower the confidence.
   The OCR (rapidocr_onnxruntime) is in requirements.txt; without it the row labels are not checked.
 
+PDFs, gradients and anything else printed on the sheet (find_crop.py)
+  A PDF can be given directly (it is rendered so its text is as tall as on the trained sheets, whatever the page size):
+    python read_sheet.py --adapter adapter.zip --image sheet.pdf --find-only -i
+  --find-only skips the whole-sheet reading (bridges and bands, several minutes) when you only want questions like these.
+  --page 2 picks another page of a multi-page PDF.
+  Gradient / grade-point questions:   gradient at CH 10046    slope at 9390    gradient at 1241+713
+    The grade-point symbol is found (chainage label, FL, the gradient label on each side of the stem); every other text
+    around it is blanked, and each label is read by the model in its own small crop, so a neighbouring symbol's FL is
+    never taken. No FL printed -> "FL: not printed for this grade point". For a PDF each reading is compared with the
+    PDF's own text: "matches the PDF text" or "CHECK: the PDF text says ...".
+  Any other question the fixed list does not cover (e.g. "span of BR NO. 12", "speed on curve C.NO.-1"): the text is
+    found on the sheet, a crop around it is shown to the model with your question. A number that is printed nowhere on
+    the sheet gives "not printed anywhere on this sheet" - nothing is guessed.
+  The crops used are saved in <out folder>/crops/ so you can look at what the model saw.
+  For images (not PDFs) the text is located with the local OCR, once per sheet (a few minutes on a CPU, then cached).
+
 Expected answer for the quick test (bridge 560, sheet 100):
   {"bridge_id": "560", "existing_type": "ARCH", "existing_span": "1 X 0.61", "crossing": "DRAIN",
    "proposal": "1 X 2 X 2 - RCC BOX", "category": "MINOR", "chainage_m": 1242662.9, "levels": {...}}

@@ -58,7 +58,9 @@ HELP = """I can answer, from what was read off this sheet:
                                  cut/fill, FL difference, track distance, span, proposal, crossing, category
   CH 1242662.9  /  1242+662.9    nearest bridge, and band values interpolated at that chainage
   which bridges are flagged      FLAG / CHECK findings
-  list bridges  |  summary  |  title  |  drawing number  |  scale  |  TBM BM39  |  bench marks"""
+  list bridges  |  summary  |  title  |  drawing number  |  scale  |  TBM BM39  |  bench marks
+  gradient at CH 10046           grade point: gradient on each side and FL, each read from its own crop
+  anything else printed          the text is found on the sheet and a crop of it is shown to the model"""
 
 
 def norm(s):
