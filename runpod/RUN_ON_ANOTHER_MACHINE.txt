@@ -12,7 +12,9 @@ Files (all in this kit)
 - adapter.zip        the trained weights (keep it zipped)
 - app.py             web page to ask questions
 - ask.py             ask one question from the command line
-- read_sheet.py      read a whole sheet image (uses sheet_reader.py)
+- read_sheet.py      read a whole sheet image or PDF (uses sheet_reader.py, find_crop.py, band_table.py)
+- find_crop.py       finds what a question is about on the sheet, cuts the crop, asks the model
+- band_table.py      finds the data band of any L-section (rows, headings, chainages)
 - sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
 - sheet_qa.py        answers questions about a sheet from what read_sheet.py read
 - layout.py          checks the sheet's layout before reading (see 'Layout check' below)
@@ -85,6 +87,16 @@ PDFs, gradients and anything else printed on the sheet (find_crop.py)
     around it is blanked, and each label is read by the model in its own small crop, so a neighbouring symbol's FL is
     never taken. No FL printed -> "FL: not printed for this grade point". For a PDF each reading is compared with the
     PDF's own text: "matches the PDF text" or "CHECK: the PDF text says ...".
+  Data-band values on ANY L-section PDF (band_table.py): the band table is found from the sheet's own layout - each
+    row named by the heading printed left of it, the chainage of every column from the chainage row - so it works for
+    any drawing set, not only the trained one.
+      cut/fill at C-8 TPCC2      ground level at BR NO. 15      FL at 11540      OGL at 11000
+      proposed FL UP main 2 at 11384      track distance at 1246000      cut or fill at 1245+300
+    The chainage comes from the question, or from the label it names ("C-8. TPCC2 AT Ch. 11701.654m."). The model reads
+    the printed column there, or the two columns either side (each from its own crop, neighbours and table lines
+    blanked), and the value is interpolated: x1, x2, y1, y2 are shown, each reading compared with the PDF text. Several
+    rows fitting the question (FL of DN Main 2 and of UP Main 2) are all answered. A row the sheet does not have, or a
+    chainage off the sheet, is said so - nothing is guessed.
   Any other question the fixed list does not cover (e.g. "span of BR NO. 12", "speed on curve C.NO.-1"): the text is
     found on the sheet, a crop around it is shown to the model with your question. A number that is printed nowhere on
     the sheet gives "not printed anywhere on this sheet" - nothing is guessed.

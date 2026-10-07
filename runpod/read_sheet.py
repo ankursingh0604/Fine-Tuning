@@ -27,6 +27,10 @@ own crop with all other text blanked (so a neighbour's FL is never taken); "not 
 every reading is compared with the PDF's own text. The crops are saved in <out>/crops/.
     python read_sheet.py --adapter adapter.zip --image sheet.pdf --find-only -q "gradient at CH 10046"
 --find-only skips the whole-sheet reading (minutes) when only such questions are wanted.
+
+Data-band values on a PDF of any drawing set (band_table.py): "cut/fill at C-8 TPCC2", "ground level at BR NO. 15",
+"FL at 11540" - the band's rows are found from their printed headings, the model reads the column(s) at that chainage
+and the value is interpolated between the printed columns.
 """
 import argparse
 import csv
@@ -140,7 +144,8 @@ def main():
     name = Path(args.image).stem
     out = Path(args.out or f"{name}_read")
     sheet = None
-    if Path(args.image).suffix.lower() == ".pdf":
+    is_pdf = Path(args.image).suffix.lower() == ".pdf"
+    if is_pdf:
         import find_crop
         sheet = find_crop.open_sheet(args.image, out, args.page - 1)
         print(sheet.note)
@@ -170,10 +175,16 @@ def main():
         return finder
 
     def answer(q):
-        """The fixed question list first; gradients, grade points and anything it does not know: find, crop, ask."""
+        """The fixed question list first; gradients, grade points and anything it does not know: find, crop, ask.
+        For a PDF, data-band values too: its band is found from the PDF's own layout, whatever the drawing set."""
         import find_crop
+        import band_table
         if args.find_only or find_crop.Finder.handles(q):
             return get_finder().answer(q)
+        if is_pdf and band_table.asks_row(q) and get_finder().bands():
+            a = get_finder().band_answer(q, on_sheet_only=True)     # "... at 560" may mean bridge 560: left to the list
+            if a:
+                return a
         a = qa.answer(q)
         if "I did not understand that question" in a or "I could not find that bridge" in a:
             return get_finder().answer(q)

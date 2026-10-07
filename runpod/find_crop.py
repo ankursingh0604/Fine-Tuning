@@ -29,7 +29,9 @@ from PIL import Image, ImageDraw
 Image.MAX_IMAGE_PIXELS = None
 TRAIN_TEXT_PT = 9.9          # median text height (pt) on the trained sheets, which were read at 150 dpi
 TRAIN_DPI = 150
-GRADIENT = re.compile(r"^(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+(?:\s*\([^)]*\))?|level|horizontal|(?:1\s*:\s*)?[\d.]+\s*[FR])$", re.I)
+GRADIENT = re.compile(r"^(?:(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+|level|horizontal)(?:\s*\([^)]*\))?|(?:1\s*:\s*)?[\d.]+\s*[FR])$", re.I)
+# the gradient band also abbreviates: "F 1 in 308 (-0.325%)", "R 1000" (= rise 1 in 1000); only read inside a band
+BAND_GRADIENT = re.compile(r"^[RF]\s+(?:1\s*in\s*)?[\d.,]+(?:\s*\([^)]*\))?$", re.I)
 FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
 STOP = set("what is the of at on in a an and or to for give me tell show please value values written this that which "
@@ -88,17 +90,18 @@ def norm(t):
 
 
 def meaning(label):
-    """What a gradient label says, in words: 'Rise 1 in 1000' / '1150.000 F' / '1:955 F' / 'Level'. The CAD writes a
-    level stretch as an enormous '1 in' number (e.g. 103785702.065 R)."""
+    """What a gradient label says, in words: 'Rise 1 in 1000' / 'R 1000' / 'F 1 in 308' / '1150.000 F' / '1:955 F' /
+    'Level'. The CAD writes a level stretch as an enormous '1 in' number (e.g. 103785702.065 R)."""
     t = label.strip()
-    if re.fullmatch(r"(?i)level|horizontal", t):
+    if re.fullmatch(r"(?i)(level|horizontal)(\s*\([^)]*\))?", t):
         return "level"
-    m = re.search(r"(?i)\b(rise|fall)\s*1\s*in\s*([\d.,]+)", t) or re.search(r"(?:1\s*:\s*)?([\d.]+)\s*([FR])\b", t)
-    if not m:
-        return None
-    if m.group(1).lower() in ("rise", "fall"):
-        word, n = ("rising" if m.group(1).lower() == "rise" else "falling"), m.group(2)
+    m = re.search(r"(?i)\b(rise|fall)\s*1\s*in\s*([\d.,]+)", t) or re.match(r"(?i)([RF])\s+(?:1\s*in\s*)?([\d.,]+)", t)
+    if m:
+        word, n = ("rising" if m.group(1).lower() in ("rise", "r") else "falling"), m.group(2)
     else:
+        m = re.search(r"(?:1\s*:\s*)?([\d.]+)\s*([FR])\b", t)
+        if not m:
+            return None
         n, word = m.group(1), "rising" if m.group(2).upper() == "R" else "falling"
     try:
         v = float(n.replace(",", ""))
@@ -240,6 +243,9 @@ class Finder:
             gp = self.grade_points(q)
             if gp:
                 return gp
+        band = self.band_answer(q)
+        if band:
+            return band
         return self.generic(q)
 
     # ------------------------------------------------------------ finding text
@@ -283,6 +289,128 @@ class Finder:
         ans = self.ask([crop], q)
         return f"(read from a crop around \"{w.text}\" - {p})\n{ans}"
 
+    # ------------------------------------------------------------ data bands
+    def bands(self):
+        """The sheet's data bands (band_table.py), found once."""
+        if getattr(self, "_bands", None) is None:
+            import band_table
+            self._bands = band_table.find_bands(self.s.words)
+        return self._bands
+
+    def band_rows(self, q):
+        """(rows the question asks about, rows of that kind) - see band_table.match_rows."""
+        import band_table
+        return band_table.match_rows(self.bands(), q) if self.bands() else ([], [])
+
+    def places(self, q):
+        """[(chainage, label)] the question is about: its own chainage numbers (metres or km+m; label None), else the
+        chainage printed in the label it names ("cut/fill at C-8 TPCC2" -> "C-8. TPCC2 AT Ch. 11701.654m."). Labels
+        tying for the best match each count ("BR NO. 15" -> the EX. and the PROP. bridge, at their own chainages)."""
+        # numbers that name something (BR NO. 15, C-8, LC-226, UP Main 2) are not chainages
+        bare = re.sub(r"(?i)\b(?:br(?:idge)?|no|c|lc|rob|rub|tbm|bm|curve|sl|sheet|line|main|span)\b\.?\s*(?:no\b\.?)?\s*[:\-.]?\s*\d+",
+                      " ", q)
+        qn = [n for n in numbers(bare) if n >= 10]
+        if qn:
+            return [(n, None) for n in qn[:3]]
+        m = [(s, w) for s, w in self.matches(q) if s >= 10]       # an identifier or number from the question
+        out = []
+        for s, w in m:
+            if s < m[0][0]:
+                break
+            c = re.search(r"\bCH(?:AINAGE)?\b\.?\s*[:.]?\s*(\d[\d\s+.,]*)", w.text, re.I)
+            ch = numbers(c.group(1)) if c else []
+            if ch and all(abs(ch[0] - o) > 0.01 for o, _ in out):
+                out.append((ch[0], w))
+        return out[:3]
+
+    def band_answer(self, q, on_sheet_only=False):
+        """A data-band value at a chainage: the printed column there, or the two columns either side interpolated.
+        Every value is read by the model from its own crop (neighbouring columns blanked) and, for a PDF, compared
+        with the PDF text. None when the question is not about a band row at a place on this sheet. With
+        on_sheet_only, a number outside the band's chainages is left to the caller (it may be a bridge number)."""
+        import band_table
+        if not self.bands() or not band_table.asks_row(q):
+            return None
+        rows, about = self.band_rows(q)
+        places = self.places(q)
+        if on_sheet_only:
+            places = [(ch, w) for ch, w in places if any(b.covers(ch) for b in self.bands())]
+        if not places:
+            return None
+        if not about:
+            names = "; ".join(r.heading for b in self.bands() for r in b.rows if r.heading)
+            return f"This sheet's data band has no row for that. Its rows are: {names} (nothing is guessed)."
+        if not rows:
+            kinds = "; ".join(dict.fromkeys(r.heading for _, r in about))
+            return (f"This sheet's data band has no row for exactly that. Its rows of that kind are: {kinds}. "
+                    "Ask about one of those (nothing is guessed).")
+        return "\n\n".join(self.band_value(b, r, ch, label) for ch, label in places for b, r in rows[:4])
+
+    def read_value(self, w, row):
+        """(value or None, text for the answer): one band value read by the model, checked against the PDF. The crop
+        keeps only the value itself: the band's column lines run right beside it and could pass for a minus sign."""
+        import band_table
+        W, H = self.s.image.size
+        region = tuple(int(v) for v in grow(w.box, 0.6 * w.h, W, H))
+        img = self.clean_crop([w], region)
+        # table rules cross the whole area around the value (the row's own lines run right along its ends, and cut
+        # short they look like dashes); a printed number never spans it
+        a = np.asarray(img).copy()
+        dark = a.min(axis=2) < 200
+        a[dark.mean(axis=1) > 0.85, :] = 255
+        a[:, dark.mean(axis=0) > 0.85] = 255
+        img = Image.fromarray(a)
+        # the column's ordinate line runs straight through its value, broken only by the digits, so it touches both
+        # ends of the text: keep no margin along the reading direction, a little across it
+        ax, ay = abs(w.dir[0]) > 0.5, abs(w.dir[1]) > 0.5
+        mx, my = (0 if ax else 0.15 * w.h), (0 if ay else 0.15 * w.h)
+        keep = [int(round(v)) for v in (max(0, w.box[0] - mx), max(0, w.box[1] - my), min(W, w.box[2] + mx), min(H, w.box[3] + my))]
+        white = Image.new("RGB", img.size, "white")
+        white.paste(img.crop((keep[0] - region[0], keep[1] - region[1], keep[2] - region[0], keep[3] - region[1])),
+                    (keep[0] - region[0], keep[1] - region[1]))
+        crop = pad_canvas(white)
+        self.save(crop, f"band_{row.heading[:24]}_{w.text}")
+        read = self.ask([crop], "What text is written in this crop? Reply with the exact text only.").strip().strip('"').strip()
+        m = re.search(r"-?\d+(?:\.\d+)?", read.replace(" ", ""))
+        y = float(m.group()) if m else None
+        if self.s.source != "pdf":
+            return y, read
+        true = band_table.value(w.text)
+        if y is not None and abs(y - true) < 1e-9:
+            return y, f"{m.group()} (matches the PDF text)"
+        return y, f"{read or '(nothing read)'} - CHECK: the PDF text says \"{w.text}\""
+
+    def band_value(self, band, row, ch, label):
+        import band_table
+        vals = band.values(row)
+        g = lambda v: f"{v:.3f}".rstrip("0").rstrip(".")                 # chainages to the mm, without trailing zeros
+        where = f"CH {g(ch)}" + (f" (\"{label.text}\")" if label else "")
+        head = f"{row.heading} at {where}:"
+        lo, hi = vals[0][0], vals[-1][0]
+        if not lo - 1e-6 <= ch <= hi + 1e-6:
+            return f"{head}\n  outside this sheet's band - the row runs from CH {g(lo)} to CH {g(hi)} (nothing is guessed)."
+        exact = [(c, w) for c, w in vals if abs(c - ch) < 1e-6]
+        if exact:
+            c, w = exact[0]
+            return f"{head}\n  printed at CH {g(c)}: {self.read_value(w, row)[1]}"
+        c1, w1 = max(((c, w) for c, w in vals if c < ch), key=lambda t: t[0])
+        c2, w2 = min(((c, w) for c, w in vals if c > ch), key=lambda t: t[0])
+        (y1, t1), (y2, t2) = self.read_value(w1, row), self.read_value(w2, row)
+        lines = [head, f"  not printed at CH {g(ch)} itself; the printed columns either side:",
+                 f"  x1 = {g(c1)}   y1 = {t1}", f"  x2 = {g(c2)}   y2 = {t2}"]
+        dec = max(len(t.split(".")[1]) if "." in t else 0 for t in (w1.text, w2.text))
+        interp = lambda a, b: a + (b - a) / (c2 - c1) * (ch - c1)
+        if y1 is None or y2 is None:
+            lines.append("  cannot interpolate: the model could not read a value (see the crops)")
+        else:
+            lines.append(f"  y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) = {y1:g} + ({y2:g} - {y1:g}) / ({g(c2)} - {g(c1)}) * "
+                         f"({g(ch)} - {g(c1)}) = {interp(y1, y2):.{dec}f}")
+        if self.s.source == "pdf":
+            p1, p2 = band_table.value(w1.text), band_table.value(w2.text)
+            if (y1, y2) != (p1, p2):
+                lines.append(f"  with the PDF's own values ({w1.text}, {w2.text}): y = {interp(p1, p2):.{dec}f}")
+        return "\n".join(lines)
+
     # ------------------------------------------------------------ grade points
     def symbols(self, q):
         """Grade-point symbols whose chainage label carries a number from the question."""
@@ -312,6 +440,9 @@ class Finder:
             fl = ch
         else:
             fl = min(fls, key=lambda o: math.dist(o.c, ch.c)) if fls else None
+        band = self.band_sides(ch) if fl else None
+        if band:
+            return {"ch": ch, "fl": fl, "left": band[0], "right": band[1], "vertex": ch.c}
         # The bar bends at the grade point (the vertex): the gradient before it is written along the left arm and READS
         # INTO the vertex (its end is there); the one after it is written along the right arm and STARTS there. The arms
         # can have different angles. The vertex is the label end / start nearest to this symbol's chainage label;
@@ -339,6 +470,59 @@ class Finder:
         best = min(mine, key=lambda c: math.dist(c[0], ch.c) - (2 * h if c[1] and c[2] else 0))
         vx, left, right = best
         return {"ch": ch, "fl": fl, "left": left, "right": right, "vertex": vx}
+
+    def band_sides(self, ch):
+        """The L-section's gradient band: the grade point is a tick with its chainage / FL written ACROSS the row, and
+        each gradient is written once, centred on its own stretch between two ticks ("Rise 1 in 800 (0.125%)" over
+        "L= 270"). Left = the stretch ending at this tick, right = the one starting there; the neighbouring ticks bound
+        each side, so a stretch further on is never taken. None when the gradients here are not laid out that way: the
+        band's ticks stand exactly in line, its gradients are written exactly square to them, and each gradient has the
+        stretch's length printed with it ("L= 270"; on a short stretch the gradient is lifted a little above it). A
+        profile's own symbols on a flat stretch can line up too, but their gradient labels carry no length."""
+        dx, dy = ch.dir
+        across = lambda o: (o.c[0] - ch.c[0]) * dx + (o.c[1] - ch.c[1]) * dy
+        in_row = lambda o: abs(across(o)) < ch.length / 2 + ch.h
+        grads = [o for o in self.band_labels() if abs(o.dir[0] * dx + o.dir[1] * dy) < 0.02 and in_row(o)]
+        lengths = [o for o in self.s.words if re.match(r"L\s*=\s*\d", o.text)]
+        if not any(math.dist(l.c, g.c) < 3 * g.h for g in grads for l in lengths):
+            return None
+        u = min(grads, key=lambda o: math.dist(o.c, ch.c)).dir           # along the row, as the gradients read
+        t = lambda o: (o.c[0] - ch.c[0]) * u[0] + (o.c[1] - ch.c[1]) * u[1]
+        ticks = [t(o) for o in self.s.words if o is not ch and re.search(r"\bCH\b|CH\s*[:.]", o.text, re.I)
+                 and o.dir[0] * dx + o.dir[1] * dy > 0.999 and abs(t(o)) > ch.h
+                 and min(abs((p[0] - q[0]) * dx + (p[1] - q[1]) * dy)        # in line: start, middle or end
+                         for p, q in ((o.start, ch.start), (o.c, ch.c), (o.end, ch.end))) < 0.5 * ch.h]
+        if not ticks:
+            return None
+        lo = max([x for x in ticks if x < 0], default=-200 * ch.h)
+        hi = min([x for x in ticks if x > 0], default=200 * ch.h)
+        left = max((o for o in grads if lo < t(o) < 0), key=t, default=None)
+        right = min((o for o in grads if 0 < t(o) < hi), key=t, default=None)
+        return (left, right) if left or right else None
+
+    def band_labels(self):
+        """Every text that can be a gradient in the band, as printed: the usual forms, the band's abbreviations, and a
+        label stacked over lines ("Fall 1 in" / "530" / "(-0.189%)") joined into one."""
+        if getattr(self, "_band_labels", None) is None:
+            words = self.s.words
+            out = [o for o in words if GRADIENT.match(o.text) or BAND_GRADIENT.match(o.text)]
+            for head in words:
+                if not re.fullmatch(r"(?i)(rise|fall|[RF])\s*1\s*in", head.text):
+                    continue
+                lines = [head]
+                for pattern in (r"[\d.,]+", r"\(\s*-?[\d.]+\s*%\s*\)"):      # the number, then the percentage
+                    last = lines[-1]
+                    below = (-last.dir[1], last.dir[0])
+                    nxt = [o for o in words if re.fullmatch(pattern, o.text) and o.dir[0] * last.dir[0] + o.dir[1] * last.dir[1] > 0.999
+                           and 0.5 * last.h < (o.c[0] - last.c[0]) * below[0] + (o.c[1] - last.c[1]) * below[1] < 1.8 * last.h
+                           and abs((o.c[0] - last.c[0]) * last.dir[0] + (o.c[1] - last.c[1]) * last.dir[1]) < 2 * last.h]
+                    if not nxt:
+                        break
+                    lines.append(min(nxt, key=lambda o: math.dist(o.c, last.c)))
+                if len(lines) > 1:
+                    out.append(Word(" ".join(o.text for o in lines), union([o.box for o in lines]), head.dir, head.h))
+            self._band_labels = out
+        return self._band_labels
 
     def clean_crop(self, keep, region):
         """The region with every text that is not in `keep` painted white (no neighbour's label can be read)."""
