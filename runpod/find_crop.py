@@ -196,6 +196,14 @@ def open_sheet(path, out_dir, page_no=0):
 
 
 # ======================================================================== crops
+def upright(img, d):
+    """A crop of text written along direction d (image x right, y down) turned so the text reads left to right, as on
+    the model's training crops: vertical band values given as they are come back with their characters reversed
+    ("-0.606" read as "9090-"). Text within 45 degrees of horizontal is left as it is (tilted gradient labels read well)."""
+    ang = math.degrees(math.atan2(-d[1], d[0]))           # counter-clockwise from left-to-right
+    return img if abs(ang) <= 45 else img.rotate(-ang, expand=True, fillcolor="white")
+
+
 def pad_canvas(img, min_side=448):
     """Keep the text at its size: place small crops on white instead of letting the model's processor enlarge them."""
     W, H = max(min_side, img.width), max(min_side, img.height)
@@ -368,7 +376,7 @@ class Finder:
         white = Image.new("RGB", img.size, "white")
         white.paste(img.crop((keep[0] - region[0], keep[1] - region[1], keep[2] - region[0], keep[3] - region[1])),
                     (keep[0] - region[0], keep[1] - region[1]))
-        crop = pad_canvas(white)
+        crop = pad_canvas(upright(white, w.dir))
         self.save(crop, f"band_{row.heading[:24]}_{w.text}")
         read = self.ask([crop], "What text is written in this crop? Reply with the exact text only.").strip().strip('"').strip()
         m = re.search(r"-?\d+(?:\.\d+)?", read.replace(" ", ""))
@@ -400,15 +408,17 @@ class Finder:
                  f"  x1 = {g(c1)}   y1 = {t1}", f"  x2 = {g(c2)}   y2 = {t2}"]
         dec = max(len(t.split(".")[1]) if "." in t else 0 for t in (w1.text, w2.text))
         interp = lambda a, b: a + (b - a) / (c2 - c1) * (ch - c1)
+        pdf = self.s.source == "pdf"
+        p1, p2 = (band_table.value(w1.text), band_table.value(w2.text)) if pdf else (None, None)
+        misread = pdf and (y1, y2) != (p1, p2)
         if y1 is None or y2 is None:
-            lines.append("  cannot interpolate: the model could not read a value (see the crops)")
+            lines.append("  cannot interpolate from the model's readings: a value could not be read (see the crops)")
         else:
-            lines.append(f"  y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) = {y1:g} + ({y2:g} - {y1:g}) / ({g(c2)} - {g(c1)}) * "
+            lines.append(("  from the model's readings (CHECK - they differ from the PDF): " if misread else "  ") +
+                         f"y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) = {y1:g} + ({y2:g} - {y1:g}) / ({g(c2)} - {g(c1)}) * "
                          f"({g(ch)} - {g(c1)}) = {interp(y1, y2):.{dec}f}")
-        if self.s.source == "pdf":
-            p1, p2 = band_table.value(w1.text), band_table.value(w2.text)
-            if (y1, y2) != (p1, p2):
-                lines.append(f"  with the PDF's own values ({w1.text}, {w2.text}): y = {interp(p1, p2):.{dec}f}")
+        if misread:
+            lines.append(f"  with the PDF's own values ({w1.text}, {w2.text}): y = {interp(p1, p2):.{dec}f}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------ grade points
@@ -546,7 +556,7 @@ class Finder:
         """One label in its own small crop, read by the model."""
         W, H = self.s.image.size
         box = grow(word.box, 0.6 * word.h, W, H)
-        crop = pad_canvas(self.clean_crop(region_keep, box))
+        crop = pad_canvas(upright(self.clean_crop(region_keep, box), word.dir))
         p = self.save(crop, what)
         ans = self.ask([crop], "What text is written in this crop? Reply with the exact text only.")
         return ans.strip().strip('"').strip(), p
@@ -584,7 +594,7 @@ class Finder:
             # the chainage / FL block, read together
             block = [ch] + ([fl] if fl and fl is not ch else [])
             b = grow(union([k.box for k in block]), 0.6 * ch.h, W, H)
-            crop = pad_canvas(self.clean_crop(block, b))
+            crop = pad_canvas(upright(self.clean_crop(block, b), ch.dir))
             self.save(crop, f"gp_chfl_{ch.text}")
             read = self.ask([crop], "What text is written in this crop? Reply with the exact text only.")
             m = FL_RE.search(read)
