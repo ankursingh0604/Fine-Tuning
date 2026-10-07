@@ -120,8 +120,17 @@ def meaning(label):
 
 
 class Sheet:
-    def __init__(self, image, words, source, path, note=""):
-        self.image, self.words, self.source, self.path, self.note = image, words, source, path, note
+    """A page: its text (positions in the picture's pixels) and its picture. The picture can be made on first use
+    (render), so a PDF's pages can all be indexed from their text and only the pages an answer needs are rendered."""
+
+    def __init__(self, image, words, source, path, note="", render=None):
+        self._image, self.words, self.source, self.path, self.note, self._render = image, words, source, path, note, render
+
+    @property
+    def image(self):
+        if self._image is None:
+            self._image = self._render()
+        return self._image
 
 
 def _pdf_words(page, zoom):
@@ -177,8 +186,9 @@ def _ocr_words(img, cache):
     return [w for w, _ in found]
 
 
-def open_sheet(path, out_dir, page_no=0):
-    """A PDF page rendered at the training text size (with its text layer), or an image (with OCR text)."""
+def open_sheet(path, out_dir, page_no=0, lazy=False):
+    """A PDF page rendered at the training text size (with its text layer), or an image (with OCR text). With lazy, a
+    PDF page is rendered only when its picture is first needed."""
     path, out_dir = Path(path), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".pdf":
@@ -192,11 +202,18 @@ def open_sheet(path, out_dir, page_no=0):
         med = sizes[len(sizes) // 2] if sizes else TRAIN_TEXT_PT
         dpi = int(min(900, max(100, round(TRAIN_DPI * TRAIN_TEXT_PT / med / 25) * 25)))
         png = out_dir / f"{path.stem}_p{page_no + 1}_{dpi}dpi.png"
-        if not png.exists():
-            page.get_pixmap(dpi=dpi).save(png)
+
+        def render():
+            if not png.exists():
+                d = pymupdf.open(path)
+                pg = d[page_no]
+                if pg.rotation:
+                    pg.remove_rotation()
+                pg.get_pixmap(dpi=dpi).save(png)
+            return Image.open(png).convert("RGB")
         note = (f"{path.name}: page {page_no + 1} of {len(doc)}, rendered at {dpi} dpi so its text is as tall as on the trained "
                 f"sheets (median text {med:.1f} pt); text positions from the PDF (exact).")
-        sheet = Sheet(Image.open(png).convert("RGB"), _pdf_words(page, dpi / 72), "pdf", png, note)
+        sheet = Sheet(None if lazy else render(), _pdf_words(page, dpi / 72), "pdf", png, note, render)
         sheet.pdf, sheet.page_no = path, page_no
         return sheet
     img = Image.open(path).convert("RGB")
@@ -405,24 +422,31 @@ class Finder:
                    f" - CHECK: the PDF text says \"{sheet_objects.joined(b.best()).text}\"")
 
     def list_bridges(self, q):
-        ql = q.lower()
-        st = self.asked_status(ql)
-        kinds = [alts for pat, alts in self.TYPE_WORDS if re.search(pat, ql)]
-        bs = self.objects().find_bridges(status=st, kinds=kinds)
-        what = " ".join(x for x in (st, " ".join(re.search(p, ql).group() for p, _ in self.TYPE_WORDS if re.search(p, ql)).upper())
-                        if x)
+        bs, what = self.bridges_asked(q)
         if not bs:
             allb = ", ".join(f"{b.name} ({b.fields()['type']})" for b in self.objects().bridges)
             return f"No {what + ' ' if what else ''}bridges are printed on this sheet. Its bridges: {allb}."
         out = [f"{len(bs)} {what + ' ' if what else ''}bridge callout(s) on this sheet, in chainage order "
                "(each read by the model from its own crop):"]
-        for b in bs:
-            read, _ = self.read_parts(b.best(), f"br_{b.name}")
-            f, ok = self.check_fields(b, read)
-            ch = fmt(f["chainage"]) if f["chainage"] is not None else "?"
-            out.append(f"  {b.name}: span {f['span'] or '?'}, {f['type'] or '?'}" +
-                       (f", proposal: {f['proposal']}" if f["proposal"] else "") + f", at CH {ch}{ok}")
+        out += ["  " + self.bridge_line(b) for b in bs]
         return "\n".join(out)
+
+    def bridges_asked(self, q):
+        """([Bridge], description): the bridges a list question asks for (by status and type)."""
+        ql = q.lower()
+        st = self.asked_status(ql)
+        kinds = [alts for pat, alts in self.TYPE_WORDS if re.search(pat, ql)]
+        said = sorted((m.start(), m.group()) for m in (re.search(p, ql) for p, _ in self.TYPE_WORDS) if m)   # as asked
+        what = " ".join(x for x in (st, " ".join(dict.fromkeys(w for _, w in said)).upper()) if x)
+        return self.objects().find_bridges(status=st, kinds=kinds), what
+
+    def bridge_line(self, b):
+        """One bridge for a list: its callout as the model read it, checked against the PDF."""
+        read, _ = self.read_parts(b.best(), f"br_{b.name}")
+        f, ok = self.check_fields(b, read)
+        ch = fmt(f["chainage"]) if f["chainage"] is not None else "?"
+        return (f"{b.name}: span {f['span'] or '?'}, {f['type'] or '?'}" +
+                (f", proposal: {f['proposal']}" if f["proposal"] else "") + f", at CH {ch}{ok}")
 
     def bridge_answer(self, q, nums):
         import sheet_objects

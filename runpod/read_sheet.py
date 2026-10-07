@@ -17,8 +17,9 @@ Writes, next to --out (default: a folder named after the image):
     <name>_overlay.png   the sheet with every bridge the model found (red = flagged or failed a check)
 The image can be 50-200 dpi; 150-200 dpi gives the most reliable numbers.
 
-A PDF works too (--image sheet.pdf, --page N for multi-page files): it is rendered at the resolution where its text is
-as tall as on the trained sheets, whatever the page size.
+A PDF works too: it is rendered at the resolution where its text is as tall as on the trained sheets, whatever the
+page size. A PDF with several pages given without --page is asked as one drawing (pdf_book.py): each question is
+answered from the page(s) that print what it is about, and every answer names its page. --page N opens one page.
 
 Anything else printed on the sheet (find_crop.py): a question the list above does not cover, and every gradient /
 grade-point question ("gradient at CH 10046", "slope at 9390"), is answered by finding that text on the sheet, cutting
@@ -137,7 +138,8 @@ def main():
                     help='a question about the sheet, e.g. "ground level at bridge 560"; can be given several times')
     ap.add_argument("--interactive", "-i", action="store_true", help="keep asking questions at a prompt")
     ap.add_argument("--reread", action="store_true", help="read the sheet again even if it was read before")
-    ap.add_argument("--page", type=int, default=1, help="page of a PDF (default 1)")
+    ap.add_argument("--page", type=int, default=None,
+                    help="one page of a PDF; leave it out on a multi-page PDF to ask about all its pages at once")
     ap.add_argument("--find-only", action="store_true",
                     help="skip the whole-sheet reading; answer by finding the text and asking about a crop (fast)")
     args = ap.parse_args()
@@ -146,9 +148,20 @@ def main():
     out = Path(args.out or f"{name}_read")
     sheet = None
     is_pdf = Path(args.image).suffix.lower() == ".pdf"
+    if is_pdf and args.page is None:
+        import pymupdf
+        if len(pymupdf.open(args.image)) > 1:              # all pages: each question goes to the page(s) it is about
+            import pdf_book
+            session = Session(args)
+            book = pdf_book.Book(args.image, out, session.ask)
+            print(book.note)
+            print("All-pages mode: every question is answered from the page(s) that print what it asks about, and each "
+                  "answer says its page. (--page N opens one page, with the whole-sheet reading.)")
+            ask_about(args, book.answer, ALL_PAGES_HELP)
+            return
     if is_pdf:
         import find_crop
-        sheet = find_crop.open_sheet(args.image, out, args.page - 1)
+        sheet = find_crop.open_sheet(args.image, out, (args.page or 1) - 1)
         print(sheet.note)
         args.image = str(sheet.path)               # the rest reads the rendered page, as for any image
     saved = out / f"{name}_read.json"
@@ -201,11 +214,28 @@ def main():
         for f in result["findings"]:
             print(f"[{f['severity']}] {f['message']}")
         print('\nAsk about it:  python read_sheet.py --image ' + args.image + ' -q "ground level at bridge 560"   (or -i)')
+    ask_about(args, answer)
+
+
+ALL_PAGES_HELP = """Examples (each answered from the page that prints it):
+  EXG. BR. NO. 320UP      chainage of Br. No. 575A      FL of BR NO. 575      span of Br. No. 17
+  list all bridges        list all RCC bridges           list existing pipe bridges
+  which curve is near Br. No. 575      which bridge is near curve 8      curve near CH 1245700
+  gradient at CH 1245688       cut or fill at 1245+300       ground level at BR NO. 576
+  anything else printed: span of BR NO. 12, speed on curve C.NO.-1"""
+
+
+def ask_about(args, answer, help_text=None):
+    """The questions from -q, then (with -i) a prompt until an empty line."""
+    def one(q):
+        if help_text and q.strip().lower() in ("help", "?"):
+            return help_text
+        return answer(q)
     for q in args.question:
         print(f"\nQ: {q}")
-        print(answer(q))
+        print(one(q))
     if args.interactive:
-        print("\nAsk about this sheet (help for examples, Enter on an empty line to stop).")
+        print("\nAsk about this drawing (help for examples, Enter on an empty line to stop).")
         while True:
             try:
                 q = input("\nQuestion> ").strip()
@@ -213,7 +243,7 @@ def main():
                 break
             if not q or q.lower() in ("q", "quit", "exit"):
                 break
-            print(answer(q))
+            print(one(q))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ Files (all in this kit)
 - find_crop.py       finds what a question is about on the sheet, cuts the crop, asks the model
 - band_table.py      finds the data band of any L-section (rows, headings, chainages)
 - sheet_objects.py   finds the bridges (callouts, level blocks) and curves (points, details) printed on a sheet
+- pdf_book.py        all pages of a multi-page PDF asked as one drawing (each question goes to its page)
 - sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
 - sheet_qa.py        answers questions about a sheet from what read_sheet.py read
 - layout.py          checks the sheet's layout before reading (see 'Layout check' below)
@@ -82,7 +83,13 @@ PDFs, gradients and anything else printed on the sheet (find_crop.py)
   A PDF can be given directly (it is rendered so its text is as tall as on the trained sheets, whatever the page size):
     python read_sheet.py --adapter adapter.zip --image sheet.pdf --find-only -i
   --find-only skips the whole-sheet reading (bridges and bands, several minutes) when you only want questions like these.
-  --page 2 picks another page of a multi-page PDF.
+  A PDF with several pages, given WITHOUT --page, is asked as one drawing (pdf_book.py): every page's text is indexed
+    first (a few seconds for 17 pages - bridges, curves, the chainages each page's band covers), then each question goes
+    to the page(s) that print what it asks about, and only those pages are rendered and read by the model. Every answer
+    says its page ("[page 8]"). A list of bridges covers every page; a bridge printed again at the start of the next
+    sheet is listed once ("[pages 2, 3]"); a chainage on the border of two sheets is answered from both.
+      python read_sheet.py --adapter adapter.zip --image "MKN_PNP_1040-1068_3rd Line(From Indergarh).pdf" -i
+  --page 2 opens just that page (and allows the whole-sheet reading, as for a one-page PDF).
   Gradient / grade-point questions:   gradient at CH 10046    slope at 9390    gradient at 1241+713
     The grade-point symbol is found (chainage label, FL, the gradient label on each side of the stem); every other text
     around it is blanked, and each label is read by the model in its own small crop, so a neighbouring symbol's FL is
