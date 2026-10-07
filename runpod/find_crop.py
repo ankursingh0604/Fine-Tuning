@@ -260,11 +260,13 @@ class Finder:
         self.s, self.ask, self.out = sheet, ask, Path(out_dir) / "crops"
         self.out.mkdir(parents=True, exist_ok=True)
         self.n = 0
+        self.saved = []                  # every crop written, in order (a UI shows the ones behind an answer)
 
     def save(self, img, what):
         self.n += 1
         p = self.out / f"{self.n:03d}_{re.sub(r'[^A-Za-z0-9]+', '_', what)[:40]}.png"
         img.save(p)
+        self.saved.append(p)
         return p
 
     # ------------------------------------------------------------ entry points

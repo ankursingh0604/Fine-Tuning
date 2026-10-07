@@ -3,6 +3,10 @@
     python app.py --adapter /workspace/adapter.zip                 # RunPod, full precision
     python app.py --adapter results/adapter.zip --4bit --port 7860   # small GPU (e.g. 4 GB laptop)
 
+Tab "Ask about a PDF": upload a drawing PDF (one page or many) and ask about anything printed on it - bridges, curves,
+grade points, band values at any chainage. Each answer names its page and shows the crops the model read (find_crop.py,
+pdf_book.py - the same code as read_sheet.py). A UI of its own can call open_pdf() and ask_pdf() below directly.
+
 Tab "Read a whole sheet": upload an image of a whole sheet (50-200 dpi) and the model reads every bridge,
 its levels and band values, the title block and TBMs (sheet_reader.py), with a CSV to download.
 
@@ -117,6 +121,39 @@ class Model:
         return self.processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
 
 
+# ---------------------------------------------------------------- asking about a PDF (no gradio needed: a UI calls these)
+
+def open_pdf(path, ask, log=print):
+    """A drawing PDF - one page or many - ready for questions (pdf_book.Book: every page indexed from its text; pages
+    rendered only when an answer needs them). ask(images, question) -> the model's answer, e.g. model_ask(Model(...))."""
+    import pdf_book
+    out = Path(tempfile.mkdtemp(prefix="railway_pdf_"))
+    return pdf_book.Book(path, out, ask, log=log)
+
+
+def model_ask(model):
+    """The ask() a Book needs, from a loaded Model: each crop sized for the model as in training."""
+    return lambda imgs, q: model.ask([prepare(im) for im in imgs], q)
+
+
+def ask_pdf(book, question):
+    """(answer text, [(crop image, caption)]): the answer, and the crops the model read for it, in order."""
+    import time
+    import pdf_book
+    q = (question or "").strip()
+    if book is None:
+        return "Upload a PDF first.", []
+    if not q:
+        return "Type a question (help for examples).", []
+    if q.lower() in ("help", "?"):
+        return pdf_book.HELP, []
+    marks, t = book.crop_marks(), time.time()
+    a = book.answer(q)
+    crops = book.crops_since(marks)
+    shown = [(Image.open(p).copy(), f"{p.parent.parent.name} {p.stem}") for p in crops]
+    return a + f"\n\n({len(crops)} crop(s) read by the model, {time.time() - t:.0f} s)", shown
+
+
 # ---------------------------------------------------------------- app
 
 def examples():
@@ -181,8 +218,33 @@ def build_ui(model):
                          col.get("ground_level"), col.get("cut_fill"), ", ".join(c["severity"] for c in b["checks"]) or "ok"])
         return "\n".join(lines), rows, result["overlay"], sorted(str(f) for f in out.iterdir())
 
+    def load_pdf(path, progress=gr.Progress()):
+        if not path:
+            return None, "Upload a drawing PDF."
+        book = open_pdf(path, model_ask(model), log=lambda m: progress(0, desc=m))
+        return book, ("```\n" + book.note + "\n```\nAsk anything printed on it below (type **help** for examples). "
+                      "Every answer names its page and shows the crops the model read.")
+
     with gr.Blocks(title="Railway drawing reader") as ui:
         gr.Markdown("## Railway drawing reader")
+        with gr.Tab("Ask about a PDF"):
+            gr.Markdown("Upload a Plan & L-Section **PDF** (one page or many, any drawing set) and ask about anything printed on "
+                        "it: bridges (list, by type, chainage, span, levels), curves (and which bridge is on them), grade "
+                        "points, data-band values at any chainage (interpolated), anything else printed. The right page and "
+                        "label are found from the PDF's text, cut out, and read by the model; every reading is compared "
+                        "with the PDF text (\"matches the PDF text\" or CHECK). Nothing is guessed.")
+            pdf_in = gr.File(label="Drawing PDF", file_types=[".pdf"], type="filepath")
+            pdf_info = gr.Markdown()
+            book_state = gr.State(None)
+            with gr.Row():
+                pdf_q = gr.Textbox(label="Question", scale=5,
+                                   placeholder="e.g.  chainage of existing Br. No. 16   |   list all RCC bridges   |   FL at 11275")
+                pdf_go = gr.Button("Ask", variant="primary", scale=1)
+            pdf_answer = gr.Textbox(label="Answer", lines=18)
+            pdf_crops = gr.Gallery(label="Crops the model read for this answer", columns=4, height="auto")
+            pdf_in.upload(load_pdf, [pdf_in], [book_state, pdf_info])
+            pdf_go.click(ask_pdf, [book_state, pdf_q], [pdf_answer, pdf_crops])
+            pdf_q.submit(ask_pdf, [book_state, pdf_q], [pdf_answer, pdf_crops])
         with gr.Tab("Read a whole sheet"):
             gr.Markdown("Upload an image of a whole Plan & L-Section sheet (50-200 dpi; 150-200 dpi reads most reliably). "
                         "The model reads it in zoomed-in pieces: every bridge callout, its level block, the data-band values at "

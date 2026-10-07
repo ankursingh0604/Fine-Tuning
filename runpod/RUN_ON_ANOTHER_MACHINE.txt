@@ -38,8 +38,16 @@ Quick test from the command line
 
 Web page
   python app.py --adapter adapter.zip
-  then open http://localhost:7860 in a browser on that machine.
+  then open http://localhost:7860 in a browser on that machine (other machines on the network: http://<its IP>:7860).
   (add --4bit on small GPUs; add --share for a temporary public link - anyone with the link can use it)
+  Tabs:
+    Ask about a PDF       upload a drawing PDF (one page or many) and ask anything printed on it - the same questions
+                          as read_sheet.py (bridges, curves, grade points, band values, ...). Each answer names its page
+                          and shows the crops the model read, with "matches the PDF text" / CHECK for every reading.
+    Read a whole sheet    a sheet IMAGE of the trained drawing set: every bridge, levels, band values, CSV.
+    Ask about a crop      a crop you cut yourself and a question about it.
+  A UI of its own can call app.open_pdf(path, app.model_ask(app.Model(adapter))) once per PDF, then
+  app.ask_pdf(book, question) -> (answer text, [(crop image, caption)]) for each question; no gradio needed.
 
 Read a WHOLE sheet image (50-200 dpi)
   Command line:

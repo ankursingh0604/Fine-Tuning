@@ -157,7 +157,7 @@ def main():
             print(book.note)
             print("All-pages mode: every question is answered from the page(s) that print what it asks about, and each "
                   "answer says its page. (--page N opens one page, with the whole-sheet reading.)")
-            ask_about(args, book.answer, ALL_PAGES_HELP)
+            ask_about(args, book.answer, pdf_book.HELP)
             return
     if is_pdf:
         import find_crop
@@ -215,14 +215,6 @@ def main():
             print(f"[{f['severity']}] {f['message']}")
         print('\nAsk about it:  python read_sheet.py --image ' + args.image + ' -q "ground level at bridge 560"   (or -i)')
     ask_about(args, answer)
-
-
-ALL_PAGES_HELP = """Examples (each answered from the page that prints it):
-  EXG. BR. NO. 320UP      chainage of Br. No. 575A      FL of BR NO. 575      span of Br. No. 17
-  list all bridges        list all RCC bridges           list existing pipe bridges
-  which curve is near Br. No. 575      which bridge is near curve 8      curve near CH 1245700
-  gradient at CH 1245688       cut or fill at 1245+300       ground level at BR NO. 576
-  anything else printed: span of BR NO. 12, speed on curve C.NO.-1"""
 
 
 def ask_about(args, answer, help_text=None):

@@ -16,16 +16,28 @@ from pathlib import Path
 import band_table
 import find_crop as F
 
+HELP = """Examples (each answered from the page that prints it):
+  EXG. BR. NO. 320UP      chainage of existing Br. No. 16      FL of BR NO. 575      span of Br. No. 17
+  list all bridges        list all RCC bridges                 list existing pipe bridges
+  which curve is near Br. No. 15      which bridge is near curve 8      Curve no. 8      curve near CH 12000
+  gradient at CH 11540       FL at 11275       cut/fill value for C-8 TPCC2       ground level at BR NO. 15
+  anything else printed: speed on curve C.NO.-1, PROPOSED ROB AT CH 11602"""
+
 
 class Book:
     def __init__(self, path, out_dir, ask, log=print):
         import pymupdf
         self.path, self.out = Path(path), Path(out_dir)
         n = len(pymupdf.open(path))
-        log(f"{self.path.name}: {n} pages - indexing every page's text (bridges, curves, band chainages) ...")
+        log(f"{self.path.name}: {n} page{'s' if n > 1 else ''} - indexing every page's text (bridges, curves, band chainages) ...")
         self.sheets = [F.open_sheet(path, self.out / f"page{i + 1}", i, lazy=True) for i in range(n)]
         self.finders = [F.Finder(s, ask, self.out / f"page{i + 1}") for i, s in enumerate(self.sheets)]
         self.note = self.summary()
+
+    @property
+    def where(self):
+        n = len(self.finders)
+        return "on this sheet" if n == 1 else f"on any of the {n} pages of this PDF"
 
     def summary(self):
         rows = []
@@ -36,7 +48,8 @@ class Book:
             nb = len({b.num for b in f.objects().bridges})
             nc = len(f.objects().curves)
             rows.append(f"  page {i + 1}: {span}; {nb} bridge(s), {nc} curve(s)")
-        return f"{self.path.name}: {len(self.finders)} pages\n" + "\n".join(rows)
+        n = len(self.finders)
+        return f"{self.path.name}: {n} page{'s' if n > 1 else ''}\n" + "\n".join(rows)
 
     # ------------------------------------------------------------ which pages a question is about
     def pages_for(self, q):
@@ -47,14 +60,14 @@ class Book:
         nums = [n.upper() for n in F.BRIDGE_REF.findall(q)]
         if nums:
             hit = [i for i in everywhere if any(fs[i].objects().find_bridges(num=n) for n in nums)]
-            return hit, f"no bridge {', '.join(nums)} is printed on any of the {len(fs)} pages of this PDF"
+            return hit, f"no bridge {', '.join(nums)} is printed {self.where}"
         if re.search(r"\b(list|all|how many|which|show|every|count)\b", ql) and re.search(r"\bbr(?:idge)?s?\b", ql):
             return [i for i in everywhere if fs[i].objects().bridges], "no bridge callouts are printed in this PDF"
         cid = F.CURVE_ID.search(q)
         if cid and (re.search(r"\bcurves?\b", ql) or not band_table.asks_row(q)):
             num = cid.group(1).upper()
             hit = [i for i in everywhere if any(c.num == num for c in fs[i].objects().curves)]
-            return hit, f"no curve {num} is printed on any of the {len(fs)} pages of this PDF"
+            return hit, f"no curve {num} is printed {self.where}"
         # a chainage: the pages whose band covers it, else whose grade-point / chainage labels carry it
         chs = [ch for ch, w in fs[0].places(q) if w is None] if fs else []
         if chs:
@@ -70,13 +83,13 @@ class Book:
                 return strict or covers, ""
             if labels:
                 return labels, ""
-            return [], (f"CH {', '.join(F.fmt(c) for c in chs)} is not on any of the {len(fs)} pages of this PDF "
+            return [], (f"CH {', '.join(F.fmt(c) for c in chs)} is not {self.where} "
                         f"(their bands cover: {self.ranges()})")
         # anything else: the page(s) whose text matches best
         scored = [(max((s for s, _ in fs[i].matches(q)), default=0), i) for i in everywhere]
         top = max((s for s, _ in scored), default=0)
         if top <= 0:
-            return [], "nothing in the question is printed on any page of this PDF"
+            return [], f"nothing in the question is printed {self.where}"
         return [i for s, i in scored if s == top][:3], ""
 
     def ranges(self):
@@ -100,7 +113,7 @@ class Book:
             bs, what = f.bridges_asked(q)
             found += [(i, b) for b in bs]
         if not found:
-            return f"No {what + ' ' if what else ''}bridges are printed on any of the {len(self.finders)} pages of this PDF."
+            return f"No {what + ' ' if what else ''}bridges are printed {self.where}."
         pages = {}
         for i, b in found:
             pages.setdefault((b.num, b.status), []).append(i + 1)
@@ -122,8 +135,13 @@ class Book:
         pages, why = self.pages_for(q)
         if not pages:
             return why[0].upper() + why[1:] + " (nothing is guessed)."
-        out = []
-        for i in pages:
-            a = self.finders[i].answer(q)
-            out.append(f"[page {i + 1}]\n{a}")
-        return "\n\n".join(out)
+        if len(self.finders) == 1:
+            return self.finders[0].answer(q)
+        return "\n\n".join(f"[page {i + 1}]\n{self.finders[i].answer(q)}" for i in pages)
+
+    def crops_since(self, marks):
+        """The crops saved since marks (from crop_marks()) - the ones behind the last answer."""
+        return [p for f, m in zip(self.finders, marks) for p in f.saved[m:]]
+
+    def crop_marks(self):
+        return [len(f.saved) for f in self.finders]
