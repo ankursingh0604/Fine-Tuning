@@ -89,6 +89,11 @@ def norm(t):
     return re.sub(r"\s+", " ", t).strip().upper()
 
 
+def fmt(v):
+    """A chainage or level to the mm, without trailing zeros: 11701.654, 11384, 3.83."""
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
 def meaning(label):
     """What a gradient label says, in words: 'Rise 1 in 1000' / 'R 1000' / 'F 1 in 308' / '1150.000 F' / '1:955 F' /
     'Level'. The CAD writes a level stretch as an enormous '1 in' number (e.g. 103785702.065 R)."""
@@ -199,9 +204,10 @@ def open_sheet(path, out_dir, page_no=0):
 def upright(img, d):
     """A crop of text written along direction d (image x right, y down) turned so the text reads left to right, as on
     the model's training crops: vertical band values given as they are come back with their characters reversed
-    ("-0.606" read as "9090-"). Text within 45 degrees of horizontal is left as it is (tilted gradient labels read well)."""
+    ("-0.606" read as "9090-"). Text within 30 degrees of horizontal is left as it is (the tilted gradient labels on a
+    profile, which the model reads well); steeper text such as the plan's diagonal callouts is turned."""
     ang = math.degrees(math.atan2(-d[1], d[0]))           # counter-clockwise from left-to-right
-    return img if abs(ang) <= 45 else img.rotate(-ang, expand=True, fillcolor="white")
+    return img if abs(ang) <= 30 else img.rotate(-ang, expand=True, fillcolor="white")
 
 
 def pad_canvas(img, min_side=448):
@@ -251,6 +257,9 @@ class Finder:
             gp = self.grade_points(q)
             if gp:
                 return gp
+        obj = self.object_answer(q)
+        if obj:
+            return obj
         band = self.band_answer(q)
         if band:
             return band
@@ -297,6 +306,265 @@ class Finder:
         ans = self.ask([crop], q)
         return f"(read from a crop around \"{w.text}\" - {p})\n{ans}"
 
+    # ------------------------------------------------------------ bridges and curves
+    def objects(self):
+        """The sheet's bridges and curves (sheet_objects.py), found once."""
+        if getattr(self, "_objects", None) is None:
+            import sheet_objects
+            self._objects = sheet_objects.SheetObjects(self.s.words)
+        return self._objects
+
+    def strip_crop(self, parts):
+        """Only the label's own lines: each line's strip (along its text, a text height thick) is kept and everything
+        else is white. A diagonal label's upright box also holds the labels printed parallel to it; this does not."""
+        import sheet_objects
+        W, H = self.s.image.size
+        lab = sheet_objects.joined(parts)
+        region = tuple(int(v) for v in grow(lab.box, 0.6 * lab.h, W, H))
+        mask = Image.new("L", (region[2] - region[0], region[3] - region[1]), 0)
+        d = ImageDraw.Draw(mask)
+        for p in parts:
+            (dx, dy), (nx, ny) = p.dir, (-p.dir[1], p.dir[0])
+            a, b = p.length / 2 + 0.3 * p.h, 0.65 * p.h
+            pts = [(p.c[0] + sa * a * dx + sb * b * nx - region[0], p.c[1] + sa * a * dy + sb * b * ny - region[1])
+                   for sa, sb in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+            d.polygon(pts, fill=255)
+        img = Image.composite(self.s.image.crop(region), Image.new("RGB", mask.size, "white"), mask)
+        img = upright(img, lab.dir)
+        box = img.convert("L").point(lambda v: 255 if v < 250 else 0).getbbox()
+        if box:                                             # turned text: trim the empty corners the turn leaves
+            m = int(0.6 * lab.h)
+            img = img.crop((max(0, box[0] - m), max(0, box[1] - m), min(img.width, box[2] + m), min(img.height, box[3] + m)))
+        return img, lab
+
+    def read_parts(self, parts, what):
+        """A label - all its printed lines - read by the model from a crop of its own strip, turned to read left to
+        right. Read once per label (several answers can need the same one)."""
+        reads = self.__dict__.setdefault("_reads", {})
+        key = tuple(id(p) for p in parts)
+        if key not in reads:
+            img, lab = self.strip_crop(parts)
+            crop = pad_canvas(img)
+            self.save(crop, what)
+            read = self.ask([crop], "What text is written in this crop? Reply with the exact text only.")
+            reads[key] = (" ".join(read.split()).strip('"').strip(), lab)
+        return reads[key]
+
+    def object_answer(self, q):
+        """Questions about the bridges and curves printed on the sheet; None when the question is about neither."""
+        ql = q.lower()
+        objs = self.objects()
+        if re.search(r"\bcurves?\b", ql) and (objs.curves or not objs.bridges):
+            return self.curve_answer(q)
+        bridge_q = re.search(r"\bbr(?:idge)?s?\b|\bbr\.", ql)
+        if not bridge_q or not objs.bridges:
+            return None
+        import band_table
+        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]?)\b", q, re.I)]
+        if not nums:
+            if re.search(r"\b(list|all|how many|which|what|show|every|count)\b", ql):
+                return self.list_bridges(q)
+            return None
+        levels = re.search(r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?)\b", ql)
+        if band_table.asks_row(q) and not levels or re.search(r"ground|\bogl\b|\bgl\b|cut|fill|rail|\brl\b|track|differ", ql):
+            return None                                     # a band value at the bridge: the band reader answers
+        return self.bridge_answer(q, nums)
+
+    @staticmethod
+    def asked_status(ql):
+        ex = re.search(r"\b(ex|exg|exist\w*|old)\b", ql)
+        pr = re.search(r"\b(prop\w*|new)\b", ql)
+        return "existing" if ex and not pr else "proposed" if pr and not ex else None
+
+    TYPE_WORDS = [(r"\br\.?\s*c\.?\s*c\b|\brcb\b", ("RCC", "RCB")), (r"\bbox\b|\brcb\b", ("BOX", "RCB")),
+                  (r"hume|\bpipes?\b", ("HUME", "PIPE")), (r"girder", ("GIRDER",)), (r"\bplate\b", ("PLATE",)),
+                  (r"\bslabs?\b", ("SLAB",)), (r"\barch\w*", ("ARCH",)), (r"\bpsc\b", ("PSC",)),
+                  (r"flat\s*top|\bf\.?\s*t\b", ("FT",))]
+
+    def check_fields(self, b, read, keys=("chainage", "span", "type", "proposal")):
+        """The callout as the model read it, and whether the fields shown in the answer agree with the PDF text."""
+        import sheet_objects
+        f, p = b.fields(read), b.fields()
+        if self.s.source != "pdf":
+            return f, ""
+        nt = lambda v: sheet_objects.norm_type(v or "")
+
+        def same(k):
+            if k == "chainage":
+                return f[k] is not None and p[k] is not None and abs(f[k] - p[k]) < 1e-6
+            return nt(f[k]) == nt(p[k])
+        return f, (" (matches the PDF text)" if all(same(k) for k in keys) else
+                   f" - CHECK: the PDF text says \"{sheet_objects.joined(b.best()).text}\"")
+
+    def list_bridges(self, q):
+        ql = q.lower()
+        st = self.asked_status(ql)
+        kinds = [alts for pat, alts in self.TYPE_WORDS if re.search(pat, ql)]
+        bs = self.objects().find_bridges(status=st, kinds=kinds)
+        what = " ".join(x for x in (st, " ".join(re.search(p, ql).group() for p, _ in self.TYPE_WORDS if re.search(p, ql)).upper())
+                        if x)
+        if not bs:
+            allb = ", ".join(f"{b.name} ({b.fields()['type']})" for b in self.objects().bridges)
+            return f"No {what + ' ' if what else ''}bridges are printed on this sheet. Its bridges: {allb}."
+        out = [f"{len(bs)} {what + ' ' if what else ''}bridge callout(s) on this sheet, in chainage order "
+               "(each read by the model from its own crop):"]
+        for b in bs:
+            read, _ = self.read_parts(b.best(), f"br_{b.name}")
+            f, ok = self.check_fields(b, read)
+            ch = fmt(f["chainage"]) if f["chainage"] is not None else "?"
+            out.append(f"  {b.name}: span {f['span'] or '?'}, {f['type'] or '?'}" +
+                       (f", proposal: {f['proposal']}" if f["proposal"] else "") + f", at CH {ch}{ok}")
+        return "\n".join(out)
+
+    def bridge_answer(self, q, nums):
+        import sheet_objects
+        ql = q.lower()
+        st = self.asked_status(ql)
+        want = {k for k, pat in (("chainage", r"chainage|\bch\b|where|locat|position"), ("span", r"\bspan|opening|size"),
+                                 ("type", r"\btype|kind|structure|proposal"),
+                                 ("levels", r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?)\b")) if re.search(pat, ql)}
+        out = []
+        for num in dict.fromkeys(nums):
+            bs = self.objects().find_bridges(num=num, status=st)
+            if not bs:
+                there = ", ".join(b.name for b in self.objects().find_bridges(num=num)) or "none"
+                out.append(f"No {(st + ' ') if st else ''}bridge {num} is printed on this sheet "
+                           f"(bridge {num} callouts here: {there}; nothing is guessed).")
+                continue
+            if want - {"levels"} or not want:
+                full = not want - {"levels"}
+                shown = [k for k in ("chainage", "span", "type") if k in want or full] + (["proposal"] if "type" in want or full else [])
+                for b in bs:
+                    read, _ = self.read_parts(b.best(), f"br_{b.name}")
+                    f, ok = self.check_fields(b, read, shown)
+                    parts = []
+                    if "chainage" in shown:
+                        parts.append(f"at CH {fmt(f['chainage']) if f['chainage'] is not None else '? (not read)'}")
+                    if "span" in shown:
+                        parts.append(f"span {f['span'] or '?'}")
+                    if "type" in shown:
+                        parts.append(f"{f['type'] or '?'}" + (f", proposal: {f['proposal']}" if f["proposal"] else ""))
+                    out.append(f"{b.name}: {', '.join(parts)}{ok}\n  (the model read: \"{read}\")")
+            if "levels" in want or not want:
+                blocks = bs[0].levels
+                if not blocks:
+                    out.append(f"Br. No. {num}: no level block (FL / HFL / BL) is printed for it on this sheet.")
+                    continue
+                read, lab = self.read_parts(blocks[0], f"brlv_{num}")
+                got = dict(sheet_objects.LEVEL_KV.findall(read))
+                true = dict(sheet_objects.LEVEL_KV.findall(lab.text))
+                key = lambda k: re.sub(r"[^A-Z]", "", k.upper())
+                got = {key(k): v for k, v in got.items()}
+                # the levels asked for; none named -> all of them. "FL" covers EX. FL / EXG FL, PROP. FL, FL, MIN FL REQ.
+                cat = lambda k2: "HFL" if k2 == "HFL" else "BL" if k2 == "BL" else "FL" if "FL" in k2 else k2
+                which = set()
+                if re.search(r"\bh\.?f\.?l\b", ql):
+                    which.add("HFL")
+                if re.search(r"\bb\.?l\b|\bbed\b", ql):
+                    which.add("BL")
+                if re.search(r"\bf\.?l\b|formation", ql):
+                    which.add("FL")
+                lines = []
+                for k, v in true.items():
+                    k2 = key(k)
+                    if which and cat(k2) not in which:
+                        continue
+                    if cat(k2) == "FL" and (st == "existing" and k2.startswith("PROP") or st == "proposed" and k2.startswith("EX")):
+                        continue
+                    r = got.get(k2)
+                    lines.append(f"  {k.strip()}: {r if r is not None else '? (not read)'}" +
+                                 ("" if self.s.source != "pdf" else " (matches the PDF text)" if r is not None and float(r) == float(v)
+                                  else f" - CHECK: the PDF text says {v}"))
+                out.append(f"Br. No. {num} level block (read by the model):\n" + "\n".join(lines))
+        return "\n\n".join(out)
+
+    def curve_answer(self, q):
+        """'Which curve is near Br. No. 15' / 'curve at CH 11384' / 'details of curve 8'."""
+        ql = q.lower()
+        objs = self.objects()
+        if not objs.curves:
+            return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
+        cnum = re.search(r"\bc(?:urve)?\.?\s*(?:no\.?)?\s*[-.]?\s*(\d+[a-z]*)\b", q, re.I)
+        places = []
+        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]?)\b", q, re.I)]
+        if nums:
+            st = self.asked_status(ql)
+            for b in (b for n in nums for b in objs.find_bridges(num=n, status=st)):
+                read, _ = self.read_parts(b.best(), f"br_{b.name}")
+                f, ok = self.check_fields(b, read, ("chainage",))
+                if f["chainage"] is not None:
+                    places.append((f["chainage"], f"{b.name} at CH {fmt(f['chainage'])}{ok}"))
+            if not places:
+                return f"No bridge {', '.join(nums)} is printed on this sheet (nothing is guessed)."
+        elif cnum and not re.search(r"\bnear|nearest|close|around|at\s+ch|\bat\s+\d", ql):
+            return self.curve_details(cnum.group(1).upper())
+        else:
+            places = [(ch, f"CH {fmt(ch)}" + (f" (\"{w.text}\")" if w is not None else "")) for ch, w in self.places(q)]
+        if not places:
+            return None
+        out = []
+        for ch, where in places:
+            lines = [f"{where}:"]
+            for st, found in objs.curves_near(ch).items():
+                for d, c in found:
+                    lines.append(f"  {st}: {self.curve_position(c, ch, d)}")
+            out.append("\n".join(lines))
+        return "\n\n".join(out)
+
+    def read_point(self, c, pt):
+        ch, w = c.points[pt]
+        read, _ = self.read_parts([w], f"cv_{c.num}_{pt}")
+        got = re.search(r"CH\.?\s*[:.]?\s*(\d[\d+.]*)", read, re.I)          # "AT Ch. 11367.15m" / "ATCH:11295m"
+        n = numbers(got.group(1)) if got else []
+        val = n[0] if n else None
+        ok = "" if self.s.source != "pdf" else "" if val is not None and abs(val - ch) < 1e-6 else \
+            f" - CHECK: the PDF text says \"{w.text}\""
+        return f"{pt} {fmt(val) if val is not None else '? (not read)'}{ok}"
+
+    def curve_position(self, c, ch, d):
+        pts = sorted(c.points.items(), key=lambda t: t[1][0])
+        name = f"{c.name}" + (f" ({c.hand})" if c.hand else "")
+        if d > 0:
+            first, last = pts[0], pts[-1]
+            pt = first[0] if ch < first[1][0] else last[0]
+            side = "before" if ch < first[1][0] else "after"
+            pos = f"not on a curve; the nearest is {name}, {fmt(d)} m {side} its {self.read_point(c, pt)}"
+        else:                                               # on the curve: its transition or its circular part
+            pos = f"on {name} (only {', '.join(p for p, _ in pts)} of it are on this sheet)"
+            for (a, (ca, _)), (b, (cb, _)) in zip(pts, pts[1:]):
+                if ca <= ch <= cb:
+                    part = "circular part" if a in ("TPCC1", "TC", "SC") and b in ("TPCC2", "CT", "CS") else "transition"
+                    pos = f"on {name}, in its {part} between {self.read_point(c, a)} and {self.read_point(c, b)}"
+                    break
+        return pos + (f"\n      {self.curve_summary(c)}" if c.details else "")
+
+    def curve_summary(self, c):
+        read, lab = self.read_parts(c.details[0], f"cvd_{c.num}")
+        return f"details (read by the model): {read}" + self.same_numbers(read, lab.text)
+
+    def same_numbers(self, read, text):
+        """For a block of values: the model's reading agrees with the PDF when it has the same numbers in the same
+        order (symbols and spacing - "△：" for "Δ :" - are not what is asked)."""
+        if self.s.source != "pdf":
+            return ""
+        nums = lambda t: re.findall(r"\d+(?:\.\d+)?", t)
+        return " (matches the PDF text)" if nums(read) == nums(text) else f" - CHECK: the PDF text says \"{text}\""
+
+    def curve_details(self, num):
+        cs = [c for c in self.objects().curves if c.num == num]
+        if not cs:
+            have = ", ".join(dict.fromkeys(c.num for c in self.objects().curves))
+            return f"No curve {num} is printed on this sheet (curves here: {have}; nothing is guessed)."
+        out = []
+        for c in cs:
+            pts = sorted(c.points, key=lambda p: c.points[p][0])
+            lines = [f"{c.name}" + (f" ({c.hand})" if c.hand else "") + ":",
+                     "  points: " + "; ".join(self.read_point(c, p) for p in pts)]
+            if c.details:
+                lines.append("  " + self.curve_summary(c))
+            out.append("\n".join(lines))
+        return "\n\n".join(out)
+
     # ------------------------------------------------------------ data bands
     def bands(self):
         """The sheet's data bands (band_table.py), found once."""
@@ -314,6 +582,17 @@ class Finder:
         """[(chainage, label)] the question is about: its own chainage numbers (metres or km+m; label None), else the
         chainage printed in the label it names ("cut/fill at C-8 TPCC2" -> "C-8. TPCC2 AT Ch. 11701.654m."). Labels
         tying for the best match each count ("BR NO. 15" -> the EX. and the PROP. bridge, at their own chainages)."""
+        # a bridge named in the question: the chainage printed in its callout (all its lines joined)
+        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]{0,2})\b", q, re.I)]
+        if nums and self.objects().bridges:
+            import sheet_objects
+            out = []
+            for b in (b for n in dict.fromkeys(nums) for b in self.objects().find_bridges(num=n, status=self.asked_status(q.lower()))):
+                ch = b.fields()["chainage"]
+                if ch is not None and all(abs(ch - o) > 0.01 for o, _ in out):
+                    out.append((ch, sheet_objects.joined(b.best())))
+            if out:
+                return out[:4]
         # numbers that name something (BR NO. 15, C-8, LC-226, UP Main 2) are not chainages
         bare = re.sub(r"(?i)\b(?:br(?:idge)?|no|c|lc|rob|rub|tbm|bm|curve|sl|sheet|line|main|span)\b\.?\s*(?:no\b\.?)?\s*[:\-.]?\s*\d+",
                       " ", q)
@@ -401,25 +680,95 @@ class Finder:
         if exact:
             c, w = exact[0]
             return f"{head}\n  printed at CH {g(c)}: {self.read_value(w, row)[1]}"
-        c1, w1 = max(((c, w) for c, w in vals if c < ch), key=lambda t: t[0])
-        c2, w2 = min(((c, w) for c, w in vals if c > ch), key=lambda t: t[0])
-        (y1, t1), (y2, t2) = self.read_value(w1, row), self.read_value(w2, row)
-        lines = [head, f"  not printed at CH {g(ch)} itself; the printed columns either side:",
-                 f"  x1 = {g(c1)}   y1 = {t1}", f"  x2 = {g(c2)}   y2 = {t2}"]
-        dec = max(len(t.split(".")[1]) if "." in t else 0 for t in (w1.text, w2.text))
-        interp = lambda a, b: a + (b - a) / (c2 - c1) * (ch - c1)
+        i = max(k for k, (c, _) in enumerate(vals) if c < ch)
+        (c1, w1), (c2, w2) = vals[i], vals[i + 1]
         pdf = self.s.source == "pdf"
-        p1, p2 = (band_table.value(w1.text), band_table.value(w2.text)) if pdf else (None, None)
-        misread = pdf and (y1, y2) != (p1, p2)
-        if y1 is None or y2 is None:
+        pv = lambda w: band_table.value(w.text) if pdf else None
+        dec = max(len(t.split(".")[1]) if "." in t else 0 for t in (w1.text, w2.text))
+        brk = self.grade_break(vals, i)
+        if brk is None:
+            (y1, t1), (y2, t2) = self.read_value(w1, row), self.read_value(w2, row)
+            pts = [(c1, y1, t1, pv(w1), ""), (c2, y2, t2, pv(w2), "")]
+            lines = [head, f"  not printed at CH {g(ch)} itself; the printed columns either side:"]
+        else:
+            # the gradient changes at a grade point between the two columns: a straight line from column to column
+            # would cut the corner, so the value follows the stretch that holds the chainage, from the grade point
+            gch, gw, flw = brk
+            if flw is not None:                             # an FL row: the FL printed at the grade point
+                read, _ = self.read_label(flw, [flw], f"band_gp_fl_{gw.text}")
+                m = FL_RE.search(read) or re.search(r"(-?\d+(?:\.\d+)?)", read)
+                yg = float(m.group(1)) if m else None
+                true = float(FL_RE.search(flw.text).group(1))
+                tg = (f"{m.group(1)}" if m else f"{read or '(nothing read)'}") + \
+                     ("" if not pdf else " (FL printed at the grade point, matches the PDF text)" if yg == true
+                      else f" - CHECK: the PDF text says \"{flw.text}\"")
+                pg = true if pdf else None
+            else:                                           # where the stretch on the other side reaches the grade point
+                (ca, wa), (cb, wb) = (vals[i - 1], vals[i]) if ch > gch else (vals[i + 1], vals[i + 2])
+                (ya, _), (yb, _) = self.read_value(wa, row), self.read_value(wb, row)
+                ext = lambda a, b: a + (b - a) / (cb - ca) * (gch - ca)
+                yg = ext(ya, yb) if ya is not None and yb is not None else None
+                pg = ext(pv(wa), pv(wb)) if pdf else None
+                tg = (f"{yg:.{dec}f}" if yg is not None else "? (not read)") + \
+                     f" (the stretch through CH {g(ca)} and {g(cb)} carried to the grade point)"
+            if ch > gch:
+                y2, t2 = self.read_value(w2, row)
+                pts = [(gch, yg, tg, pg, " (grade point)"), (c2, y2, t2, pv(w2), "")]
+            else:
+                y1, t1 = self.read_value(w1, row)
+                pts = [(c1, y1, t1, pv(w1), ""), (gch, yg, tg, pg, " (grade point)")]
+            lines = [head, f"  not printed at CH {g(ch)} itself, and the gradient changes between the printed columns "
+                           f"{g(c1)} and {g(c2)} - at the grade point \"{gw.text}\" - so the value is taken along the "
+                           f"stretch that holds CH {g(ch)}:"]
+        (xa, ya, ta, pa, na), (xb, yb, tb, pb, nb) = pts
+        lines += [f"  x1 = {g(xa)}{na}   y1 = {ta}", f"  x2 = {g(xb)}{nb}   y2 = {tb}"]
+        interp = lambda a, b: a + (b - a) / (xb - xa) * (ch - xa)
+        misread = pdf and (ya, yb) != (pa, pb) and not (ya is not None and yb is not None and pa is not None
+                                                      and abs(ya - pa) < 1e-9 and abs(yb - pb) < 1e-9)
+        if ya is None or yb is None:
             lines.append("  cannot interpolate from the model's readings: a value could not be read (see the crops)")
         else:
             lines.append(("  from the model's readings (CHECK - they differ from the PDF): " if misread else "  ") +
-                         f"y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) = {y1:g} + ({y2:g} - {y1:g}) / ({g(c2)} - {g(c1)}) * "
-                         f"({g(ch)} - {g(c1)}) = {interp(y1, y2):.{dec}f}")
+                         f"y = y1 + (y2 - y1) / (x2 - x1) * (x - x1) = {ya:g} + ({yb:g} - {ya:g}) / ({g(xb)} - {g(xa)}) * "
+                         f"({g(ch)} - {g(xa)}) = {interp(ya, yb):.{dec}f}")
         if misread:
-            lines.append(f"  with the PDF's own values ({w1.text}, {w2.text}): y = {interp(p1, p2):.{dec}f}")
+            lines.append(f"  with the PDF's own values: y = {interp(pa, pb):.{dec}f}")
         return "\n".join(lines)
+
+    def grade_break(self, vals, i):
+        """(chainage, chainage label, FL label or None) of a grade point strictly between the printed columns i and
+        i+1 at which this row bends - the stretches either side, carried to it, meet there while a straight line from
+        column to column would not - else None. The FL label is given when the FL printed with the grade point is the
+        row's own value there (an FL row)."""
+        import band_table
+        if i < 1 or i + 2 >= len(vals):
+            return None
+        (c0, w0), (c1, w1), (c2, w2), (c3, w3) = vals[i - 1:i + 3]
+        try:
+            v0, v1, v2, v3 = (band_table.value(w.text) for w in (w0, w1, w2, w3))
+        except ValueError:
+            return None
+        tol = 0.0015                                       # the band prints to the mm
+        for w in self.s.words:
+            if not re.search(r"\bCH\b|CH\s*[:.]", w.text, re.I):
+                continue
+            ns = [n for n in numbers(w.text) if c1 < n < c2]
+            if not ns:
+                continue
+            gch = ns[0]
+            yl = v1 + (v1 - v0) / (c1 - c0) * (gch - c1)
+            yr = v2 + (v3 - v2) / (c3 - c2) * (gch - c2)
+            straight = v1 + (v2 - v1) / (c2 - c1) * (gch - c1)
+            if abs(yl - yr) > tol or abs(straight - (yl + yr) / 2) <= tol:
+                continue
+            sym = self.symbol(w)
+            if not sym:
+                continue
+            fl = sym["fl"]
+            if fl is not None and fl is not w and abs(float(FL_RE.search(fl.text).group(1)) - (yl + yr) / 2) <= tol:
+                return gch, w, fl
+            return gch, w, None
+        return None
 
     # ------------------------------------------------------------ grade points
     def symbols(self, q):

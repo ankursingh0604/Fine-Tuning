@@ -35,6 +35,7 @@ and the value is interpolated between the printed columns.
 import argparse
 import csv
 import json
+import re
 import time
 from pathlib import Path
 
@@ -181,6 +182,10 @@ def main():
         import band_table
         if args.find_only or find_crop.Finder.handles(q):
             return get_finder().answer(q)
+        if is_pdf and re.search(r"\bcurves?\b|\b(list|all|how many|which)\b.*\bbridges?\b", q, re.I):
+            a = get_finder().object_answer(q)                 # bridges by type / status, curves: read from the callouts
+            if a:
+                return a
         if is_pdf and band_table.asks_row(q) and get_finder().bands():
             a = get_finder().band_answer(q, on_sheet_only=True)     # "... at 560" may mean bridge 560: left to the list
             if a:
