@@ -214,7 +214,7 @@ def open_sheet(path, out_dir, page_no=0, lazy=False):
         note = (f"{path.name}: page {page_no + 1} of {len(doc)}, rendered at {dpi} dpi so its text is as tall as on the trained "
                 f"sheets (median text {med:.1f} pt); text positions from the PDF (exact).")
         sheet = Sheet(None if lazy else render(), _pdf_words(page, dpi / 72), "pdf", png, note, render)
-        sheet.pdf, sheet.page_no = path, page_no
+        sheet.pdf, sheet.page_no, sheet.dpi = path, page_no, dpi
         return sheet
     img = Image.open(path).convert("RGB")
     words = _ocr_words(img, out_dir / f"{path.stem}_ocr.json")

@@ -16,23 +16,48 @@ from pathlib import Path
 import band_table
 import find_crop as F
 
-HELP = """Examples (each answered from the page that prints it):
-  EXG. BR. NO. 320UP      chainage of existing Br. No. 16      FL of BR NO. 575      span of Br. No. 17
-  list all bridges        list all RCC bridges                 list existing pipe bridges
-  which curve is near Br. No. 15      which bridge is near curve 8      Curve no. 8      curve near CH 12000
-  gradient at CH 11540       FL at 11275       cut/fill value for C-8 TPCC2       ground level at BR NO. 15
-  anything else printed: speed on curve C.NO.-1, PROPOSED ROB AT CH 11602"""
+HELP = """Things you can ask (each answered from the page that prints it)
+
+  Bridges     list all bridges · list all RCC bridges · list existing pipe bridges
+              existing bridge 320UP · chainage of existing bridge 16 · span of bridge 17 · FL of bridge 575
+  Curves      curve 8 · which curve is near bridge 15 · which bridge is near curve 8 · curve near CH 12000
+  Gradients   gradient at CH 11540
+  Band        FL at 11275 · cut or fill at C 8 TPCC2 · ground level at bridge 15 · track distance at 1246000
+  Anything    speed on curve 1 · ROB at CH 11602"""
 
 
 class Book:
     def __init__(self, path, out_dir, ask, log=print):
         import pymupdf
         self.path, self.out = Path(path), Path(out_dir)
-        n = len(pymupdf.open(path))
+        self.is_pdf = self.path.suffix.lower() == ".pdf"
+        n = len(pymupdf.open(path)) if self.is_pdf else 1     # an image is one sheet (its text from the local OCR)
         log(f"{self.path.name}: {n} page{'s' if n > 1 else ''} - indexing every page's text (bridges, curves, band chainages) ...")
-        self.sheets = [F.open_sheet(path, self.out / f"page{i + 1}", i, lazy=True) for i in range(n)]
+        self.sheets = ([F.open_sheet(path, self.out / f"page{i + 1}", i, lazy=True) for i in range(n)] if self.is_pdf
+                       else [F.open_sheet(path, self.out / "page1")])
         self.finders = [F.Finder(s, ask, self.out / f"page{i + 1}") for i, s in enumerate(self.sheets)]
         self.note = self.summary()
+
+    def suggestions(self):
+        """A few questions this document can answer, made from what it prints (for a chat UI's suggestion chips)."""
+        out = []
+        bridges = [b for f in self.finders for b in f.objects().bridges]
+        curves = [c for f in self.finders for c in f.objects().curves if c.num and not c.num.startswith("with")]
+        bands = [b for f in self.finders for b in f.bands()]
+        if bridges:                                     # worded without stops or dashes (they are shown as chips)
+            out.append("List all bridges")
+            b = bridges[min(2, len(bridges) - 1)]
+            st = {"existing": "existing ", "proposed": "proposed "}.get(b.status, "")
+            out.append(f"Chainage of {st}bridge {b.num}")
+            if curves:
+                out.append(f"Which curve is near bridge {b.num}")
+        if curves:
+            out.append(f"Which bridge is near curve {curves[0].num}")
+        if bands:
+            b = bands[0]
+            mid = b.cols[len(b.cols) // 2][1] + (b.cols[1][1] - b.cols[0][1]) / 2 if len(b.cols) > 1 else b.cols[0][1]
+            out.append(f"Cut or fill at {F.fmt(mid)}")
+        return out[:4]
 
     @property
     def where(self):

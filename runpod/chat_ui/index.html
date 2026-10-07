@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Railsight</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Railsight: a reading desk for railway drawings. Ink blue drafting room, signal coloured status */
+  :root {
+    --bg: #0d1117; --surface: #131922; --surface-2: #1a222d; --surface-3: #222c39; --line: #253142; --line-2: #33425a;
+    --text: #e6edf3; --muted: #8d9bad; --faint: #5d6b7e;
+    --signal: #f4b63f; --signal-soft: rgba(244, 182, 63, .12); --signal-line: rgba(244, 182, 63, .38);
+    --go: #3fd08e; --go-soft: rgba(63, 208, 142, .12); --stop: #ff7a6b; --blue: #7cb7ff; --blue-soft: rgba(124, 183, 255, .12);
+    --stage: #0a1019; --grid: rgba(124, 183, 255, .055); --grid-strong: rgba(124, 183, 255, .10);
+    --sheet-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06);
+    --sans: "IBM Plex Sans", ui-sans-serif, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3efe6; --surface: #fbf8f2; --surface-2: #f1ece1; --surface-3: #e7e0d2; --line: #e0d8c8; --line-2: #cfc4ae;
+      --text: #1b2230; --muted: #6a6f7a; --faint: #9a9a94;
+      --signal: #b8770a; --signal-soft: rgba(184, 119, 10, .10); --signal-line: rgba(184, 119, 10, .35);
+      --go: #17875a; --go-soft: rgba(23, 135, 90, .10); --stop: #c2412f; --blue: #2457c5; --blue-soft: rgba(36, 87, 197, .09);
+      --stage: #e8e2d4; --grid: rgba(36, 87, 197, .07); --grid-strong: rgba(36, 87, 197, .13);
+      --sheet-shadow: 0 24px 60px rgba(60, 50, 30, .22), 0 0 0 1px rgba(0, 0, 0, .06);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.55 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .ic { width: 18px; height: 18px; flex: none; }
+  .shell { display: grid; grid-template-rows: 54px 1fr; height: 100vh; }
+
+  /* ---------------- top bar: mark, open drawings as file tabs, upload */
+  header { display: flex; align-items: center; gap: 14px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); min-width: 0; }
+  .mark { display: flex; align-items: center; gap: 10px; flex: none; }
+  .mark svg { width: 30px; height: 30px; }
+  .mark b { font-weight: 700; letter-spacing: .02em; font-size: 16px; }
+  .mark small { display: block; color: var(--muted); font: 500 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; margin-top: 2px; }
+  .tabs { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; padding: 0 4px; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .ftab { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 9px; border: 1px solid transparent; color: var(--muted); white-space: nowrap; max-width: 260px; flex: none; }
+  .ftab span { overflow: hidden; text-overflow: ellipsis; }
+  .ftab em { font: 500 11px var(--mono); font-style: normal; color: var(--faint); }
+  .ftab:hover { background: var(--surface-2); color: var(--text); }
+  .ftab.on { background: var(--surface-2); border-color: var(--line-2); color: var(--text); }
+  .ftab.on::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 10px var(--signal); }
+  .upbtn { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 10px; background: var(--signal); color: #1a1205; font-weight: 600; flex: none; }
+  .upbtn:hover { filter: brightness(1.08); }
+  .seg { display: none; }
+
+  /* ---------------- body: the sheet stage and the conversation column */
+  .work { display: grid; grid-template-columns: 1fr 5px var(--chat-w, 460px); min-height: 0; }
+  .stage { position: relative; min-width: 0; overflow: hidden; background-color: var(--stage);
+    background-image: linear-gradient(var(--grid-strong) 1px, transparent 1px), linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px),
+                      linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px; }
+  .split { cursor: col-resize; background: var(--line); }
+  .split:hover, .split.on { background: var(--signal); }
+
+  /* empty stage: a drop target with a curving track */
+  .welcome { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; }
+  .drop { width: min(620px, 100%); text-align: center; padding: 34px 28px 30px; border: 1.5px dashed var(--line-2); border-radius: 22px; background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: blur(3px); transition: border-color .2s, transform .2s; }
+  .drop.hot { border-color: var(--signal); transform: scale(1.01); }
+  .drop svg.track { width: 100%; max-width: 440px; height: 120px; display: block; margin: 0 auto 6px; }
+  .drop h1 { font-size: 30px; line-height: 1.15; margin: 8px 0 8px; letter-spacing: -.01em; font-weight: 600; }
+  .drop p { color: var(--muted); margin: 0 0 22px; }
+  .drop .upbtn { display: inline-flex; height: 42px; padding: 0 20px; font-size: 15px; }
+  .fmt { margin-top: 16px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .fmt span { font: 500 11px/22px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; }
+  .train { offset-path: path("M10 92 C 120 92, 160 30, 260 30 S 400 70, 430 40"); animation: run 6s linear infinite; }
+  @keyframes run { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+
+  /* the sheet itself, with registration corners */
+  .viewport { position: absolute; inset: 0; overflow: auto; cursor: grab; display: none; }
+  .viewport.drag { cursor: grabbing; }
+  .viewport.on { display: block; }
+  .sheetwrap { position: relative; display: inline-block; margin: 44px 56px 92px; }
+  .sheetwrap img { display: block; background: #fff; box-shadow: var(--sheet-shadow); user-select: none; -webkit-user-drag: none; border-radius: 2px; }
+  .sheetwrap::before, .sheetwrap::after, .sheetwrap i::before, .sheetwrap i::after { content: ""; position: absolute; width: 18px; height: 18px; border-color: var(--signal); border-style: solid; opacity: .8; }
+  .sheetwrap::before { top: -10px; left: -10px; border-width: 2px 0 0 2px; }
+  .sheetwrap::after { bottom: -10px; right: -10px; border-width: 0 2px 2px 0; }
+  .sheetwrap i::before { top: -10px; right: -10px; border-width: 2px 2px 0 0; }
+  .sheetwrap i::after { bottom: -10px; left: -10px; border-width: 0 0 2px 2px; }
+  .pgload { position: absolute; inset: 0; display: none; place-items: center; color: var(--muted); font: 500 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; pointer-events: none; }
+  .pgload.on { display: grid; }
+
+  /* floating controls on the stage */
+  .float { position: absolute; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, .25); backdrop-filter: blur(8px); }
+  .zoombar { right: 16px; bottom: 16px; }
+  .fbtn { height: 32px; min-width: 32px; padding: 0 9px; border-radius: 8px; color: var(--muted); font: 500 13px var(--mono); }
+  .fbtn:hover { background: var(--surface-3); color: var(--text); }
+  .fbtn:disabled { opacity: .35; cursor: default; background: none; }
+  .zoomval { min-width: 52px; text-align: center; color: var(--text); font: 500 12px var(--mono); }
+  .pagebar { left: 50%; transform: translateX(-50%); bottom: 16px; max-width: calc(100% - 220px); }
+  .pages { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .pages::-webkit-scrollbar { display: none; }
+  .pchip { height: 32px; min-width: 34px; padding: 0 8px; border-radius: 8px; color: var(--muted); font: 600 12.5px var(--mono); flex: none; }
+  .pchip:hover { background: var(--surface-3); color: var(--text); }
+  .pchip.on { background: var(--signal-soft); color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal-line); }
+  .pchip.hit { position: relative; }
+  .pchip.hit::after { content: ""; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--go); }
+  .sheetname { left: 16px; top: 14px; padding: 6px 12px; font: 500 12px var(--mono); color: var(--muted); letter-spacing: .04em; max-width: calc(100% - 32px); }
+  .sheetname b { color: var(--text); font-weight: 600; }
+
+  /* ---------------- conversation column */
+  .chat { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+  .chathead { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 10px; }
+  .chathead h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; font-family: var(--mono); }
+  .ghost { color: var(--muted); font-size: 13px; padding: 5px 10px; border-radius: 8px; display: flex; gap: 6px; align-items: center; }
+  .ghost:hover { background: var(--surface-2); color: var(--text); }
+  .log { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+  .intro { margin: 6px 0 0; padding: 18px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
+  .intro h3 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  .intro p { margin: 0 0 14px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips button { padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line-2); font-size: 13.5px; color: var(--text); text-align: left; background: var(--surface); }
+  .chips button:hover { border-color: var(--signal-line); background: var(--signal-soft); }
+
+  .you { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .you .q { background: var(--signal-soft); border: 1px solid var(--signal-line); padding: 9px 14px; border-radius: 16px 16px 4px 16px; white-space: pre-wrap; word-wrap: break-word; }
+  .file { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 7px 12px 7px 7px; max-width: 100%; }
+  .file .fi { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; font: 700 10px var(--mono); color: #fff; background: linear-gradient(135deg, #e5533d, #b8321f); flex: none; }
+  .file .fi.img { background: linear-gradient(135deg, #7c5cf0, #5233c4); }
+  .file .nm { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  .file .st { font: 500 11px var(--mono); color: var(--muted); }
+
+  /* an answer sits on a little track: rails with sleepers down its left side */
+  .rs { position: relative; padding-left: 22px; }
+  .rs::before { content: ""; position: absolute; left: 4px; top: 4px; bottom: 4px; width: 9px;
+    border-left: 2px solid var(--line-2); border-right: 2px solid var(--line-2);
+    background: repeating-linear-gradient(to bottom, var(--line-2) 0 2px, transparent 2px 11px); opacity: .9; }
+  .rs .who { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .badge { font: 600 11px/20px var(--mono); letter-spacing: .04em; text-transform: none; padding: 0 8px; border-radius: 6px; }
+  .badge.ok { color: var(--go); background: var(--go-soft); }
+  .badge.warn { color: var(--signal); background: var(--signal-soft); }
+  .badge.time { color: var(--muted); background: var(--surface-2); }
+  .ans { white-space: pre-wrap; word-wrap: break-word; font: 13px/1.65 var(--mono); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; overflow-x: auto; }
+  .ans .ok { color: var(--go); }
+  .ans .chk { color: var(--signal); font-weight: 600; }
+  .say { color: var(--text); }
+  .say b { color: var(--signal); }
+  .pg { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; margin: 0 2px; border-radius: 6px; background: var(--blue-soft); color: var(--blue); font: 600 11.5px var(--mono); cursor: pointer; vertical-align: 1px; border: 0; }
+  .pg:hover { box-shadow: inset 0 0 0 1px var(--blue); }
+  .film { display: flex; gap: 10px; overflow-x: auto; margin-top: 10px; padding-bottom: 6px; }
+  .shot { flex: none; width: 168px; cursor: zoom-in; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); transition: border-color .15s, transform .15s; }
+  .shot:hover { border-color: var(--signal-line); transform: translateY(-2px); }
+  .shot img { width: 100%; height: 92px; object-fit: contain; background: #fff; display: block; padding: 6px; }
+  .shot span { display: block; padding: 6px 8px 7px; color: var(--muted); font: 500 10.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .reading { display: flex; align-items: center; gap: 12px; color: var(--muted); font: 500 12px var(--mono); letter-spacing: .06em; }
+  .reading svg { width: 120px; height: 18px; }
+  .reading .car { animation: shunt 1.6s ease-in-out infinite alternate; }
+  @keyframes shunt { from { transform: translateX(0); } to { transform: translateX(88px); } }
+
+  /* composer at the foot of the column */
+  .dock { padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+  .box { background: var(--bg); border: 1px solid var(--line-2); border-radius: 16px; padding: 8px; transition: border-color .15s, box-shadow .15s; }
+  .box:focus-within { border-color: var(--signal-line); box-shadow: 0 0 0 4px var(--signal-soft); }
+  .box.hot { border-color: var(--signal); }
+  .atts { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 2px 8px; }
+  .atts:empty { display: none; }
+  .atts .x { width: 22px; height: 22px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; margin-left: 2px; }
+  .atts .x:hover { background: var(--surface-3); color: var(--text); }
+  .line { display: flex; align-items: flex-end; gap: 8px; }
+  .add { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); flex: none; }
+  .add:hover { border-color: var(--signal-line); color: var(--signal); }
+  textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); font: 15px/1.45 var(--sans); padding: 8px 2px; max-height: 180px; min-height: 38px; overflow-y: hidden; }
+  textarea::placeholder { color: var(--faint); }
+  .go { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: var(--signal); color: #1a1205; flex: none; }
+  .go:disabled { background: var(--surface-3); color: var(--faint); cursor: default; }
+  .note { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 9px; color: var(--faint); font: 500 11px var(--mono); letter-spacing: .03em; text-align: center; }
+  .note i { width: 7px; height: 7px; border-radius: 50%; background: var(--go); display: inline-block; flex: none; }
+
+  /* enlarged crop */
+  .lb { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 24px; background: rgba(5, 8, 12, .84); backdrop-filter: blur(4px); }
+  .lb.on { display: grid; }
+  .lb figure { margin: 0; text-align: center; }
+  .lb img { max-width: 90vw; max-height: 78vh; background: #fff; border-radius: 10px; box-shadow: var(--sheet-shadow); }
+  .lb figcaption { margin-top: 12px; color: #cfd8e3; font: 500 12px var(--mono); }
+  .toast { position: fixed; left: 50%; top: 66px; transform: translateX(-50%); z-index: 60; display: none; padding: 10px 16px; border-radius: 10px; background: var(--stop); color: #fff; font-size: 14px; max-width: 90vw; box-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
+
+  @media (max-width: 900px) {
+    .work { grid-template-columns: 1fr; }
+    .split { display: none; }
+    .stage, .chat { grid-area: 1 / 1; }
+    body:not(.show-sheet) .stage { display: none; }
+    body.show-sheet .chat { display: none; }
+    .seg { display: flex; background: var(--surface-2); border-radius: 10px; padding: 3px; flex: none; }
+    .seg button { padding: 5px 12px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+    .seg button.on { background: var(--surface-3); color: var(--text); }
+    .mark small, .upbtn .lbl, .tabs { display: none; }
+    .pagebar { max-width: calc(100% - 32px); bottom: 70px; }
+    .drop h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="mark">
+      <svg viewBox="0 0 32 32" fill="none">
+        <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--surface-3)"/>
+        <path d="M9 26 C 11 18, 13 12, 13 6 M23 26 C 21 18, 19 12, 19 6" stroke="var(--text)" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M10 22h12M11 17h10M12 12h8" stroke="var(--signal)" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <div><b>Railsight</b><small>L section reader</small></div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div class="seg" id="seg"><button class="on" data-v="chat">Chat</button><button data-v="sheet">Sheet</button></div>
+    <button class="upbtn" id="upTop">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V4"/><path d="m7 9 5-5 5 5"/><path d="M5 15v4h14v-4"/></svg>
+      <span class="lbl">Open drawing</span>
+    </button>
+  </header>
+
+  <div class="work" id="work">
+    <section class="stage" id="stage">
+      <div class="welcome" id="welcome">
+        <div class="drop" id="drop">
+          <svg class="track" viewBox="0 0 440 120" fill="none">
+            <path d="M10 100 C 120 100, 160 38, 260 38 S 400 78, 430 48" stroke="var(--line-2)" stroke-width="2"/>
+            <path d="M10 84 C 120 84, 160 22, 260 22 S 400 62, 430 32" stroke="var(--line-2)" stroke-width="2"/>
+            <path d="M10 92 C 120 92, 160 30, 260 30 S 400 70, 430 40" stroke="var(--line-2)" stroke-width="13" stroke-dasharray="2 11" opacity=".9"/>
+            <g class="train"><rect x="-16" y="-6" width="32" height="12" rx="4" fill="var(--signal)"/><circle cx="10" cy="0" r="2" fill="#1a1205"/></g>
+            <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">
+              <text x="44" y="116">CH 10000</text><text x="214" y="12">CH 11540</text><text x="368" y="24">CH 12878</text>
+            </g>
+            <circle cx="260" cy="30" r="4" fill="var(--go)"/>
+          </svg>
+          <h1>Drop a drawing to begin</h1>
+          <p>Plan and L section PDFs or sheet images · any number of pages<br>Then ask about any bridge, curve, gradient or band value printed on it</p>
+          <button class="upbtn" id="upMid">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V4"/><path d="m7 9 5-5 5 5"/><path d="M5 15v4h14v-4"/></svg>
+            Choose a file
+          </button>
+          <div class="fmt"><span>PDF</span><span>PNG</span><span>JPG</span><span>TIFF</span></div>
+        </div>
+      </div>
+      <div class="viewport" id="vp"><div class="sheetwrap" id="wrap"><i></i><img id="sheet" alt=""></div></div>
+      <div class="pgload" id="pgload">Drawing the sheet</div>
+      <div class="float sheetname" id="sheetname" style="display:none"></div>
+      <div class="float pagebar" id="pagebar" style="display:none">
+        <button class="fbtn" id="prev" title="Previous page">&#8249;</button>
+        <div class="pages" id="pages"></div>
+        <button class="fbtn" id="next" title="Next page">&#8250;</button>
+      </div>
+      <div class="float zoombar" id="zoombar" style="display:none">
+        <button class="fbtn" id="zout" title="Zoom out">&minus;</button>
+        <span class="zoomval" id="zval">fit</span>
+        <button class="fbtn" id="zin" title="Zoom in">+</button>
+        <button class="fbtn" id="zfit" title="Fit the sheet">Fit</button>
+      </div>
+    </section>
+    <div class="split" id="split"></div>
+
+    <section class="chat">
+      <div class="chathead">
+        <h2>Conversation</h2>
+        <button class="ghost" id="clear" title="Start a fresh conversation">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+          Fresh start
+        </button>
+      </div>
+      <div class="log" id="log"></div>
+      <div class="dock">
+        <div class="box" id="box">
+          <div class="atts" id="atts"></div>
+          <div class="line">
+            <button class="add" id="add" title="Add a drawing">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <textarea id="q" rows="1" placeholder="Ask about this drawing"></textarea>
+            <button class="go" id="go" title="Send" disabled>
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="note"><i></i>Every reading is checked against the PDF text</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<input type="file" id="file" accept=".pdf,image/*" hidden>
+<div class="lb" id="lb"><figure><img id="lbimg" alt=""><figcaption id="lbcap"></figcaption></figure></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const S = { docs: [], active: null, page: 1, scale: null, pending: null, busy: false };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+// ---------------------------------------------------------------- the opening card in the conversation
+function intro() {
+  const d = S.active;
+  const card = document.createElement("div"); card.className = "intro"; card.id = "intro";
+  card.innerHTML = d
+    ? `<h3>${esc(d.name)} is open</h3><p>${plural(d.pages, "page")} indexed · try one of these or ask your own</p><div class="chips"></div>`
+    : `<h3>Ask the drawing</h3><p>Open a PDF or sheet image with the plus button or drop it on the left · answers come with the crops the model read</p><div class="chips"></div>`;
+  const chips = card.querySelector(".chips");
+  const list = d ? (d.suggestions || []) : ["List all bridges", "Which curve is near bridge 15", "FL at 11275", "Help"];
+  for (const s of list) {
+    const b = document.createElement("button"); b.textContent = s;
+    b.onclick = () => d ? ask(s) : pick();
+    chips.appendChild(b);
+  }
+  return card;
+}
+function resetLog() { $("log").innerHTML = ""; $("log").appendChild(intro()); }
+function refreshIntro() { const i = $("intro"); if (i) i.replaceWith(intro()); }
+function down() { const l = $("log"); l.scrollTop = l.scrollHeight; }
+
+// ---------------------------------------------------------------- drawings: tabs, pages, zoom, pan
+function renderTabs() {
+  const t = $("tabs"); t.innerHTML = "";
+  for (const d of S.docs) {
+    const b = document.createElement("button");
+    b.className = "ftab" + (d === S.active ? " on" : "");
+    b.innerHTML = `<span></span><em>${d.pages}p</em>`;
+    b.querySelector("span").textContent = d.name; b.title = d.name;
+    b.onclick = () => { openDoc(d); };
+    t.appendChild(b);
+  }
+}
+function openDoc(d, page = 1) {
+  S.active = d;
+  renderTabs(); refreshIntro();
+  $("welcome").style.display = "none";
+  ["vp"].forEach(id => $(id).classList.add("on"));
+  ["pagebar", "zoombar", "sheetname"].forEach(id => $(id).style.display = "flex");
+  $("sheetname").innerHTML = `<b></b>`; $("sheetname").querySelector("b").textContent = d.name;
+  const pg = $("pages"); pg.innerHTML = "";
+  for (let i = 1; i <= d.pages; i++) {
+    const b = document.createElement("button"); b.className = "pchip"; b.textContent = i; b.dataset.p = i;
+    b.onclick = () => show(i); pg.appendChild(b);
+  }
+  show(page);
+}
+function show(n, hits) {
+  const d = S.active; if (!d) return;
+  n = Math.max(1, Math.min(d.pages, n)); S.page = n;
+  $("prev").disabled = n <= 1; $("next").disabled = n >= d.pages;
+  document.querySelectorAll(".pchip").forEach(b => {
+    b.classList.toggle("on", +b.dataset.p === n);
+    if (hits) b.classList.toggle("hit", hits.includes(+b.dataset.p));
+  });
+  document.querySelector(".pchip.on")?.scrollIntoView({ block: "nearest", inline: "center" });
+  const img = $("sheet");
+  if (img.dataset.key === `${d.doc}/${n}`) return;
+  img.dataset.key = `${d.doc}/${n}`;
+  $("pgload").classList.add("on"); img.style.visibility = "hidden";
+  img.onload = () => { $("pgload").classList.remove("on"); img.style.visibility = "visible"; S.scale = null; fit(); };
+  img.onerror = () => { $("pgload").textContent = "This page could not be drawn"; };
+  img.src = `/api/doc/${d.doc}/page/${n}`;
+}
+function fitScale() {
+  const img = $("sheet"), vp = $("vp");
+  if (!img.naturalWidth) return 1;
+  return Math.min((vp.clientWidth - 112) / img.naturalWidth, (vp.clientHeight - 136) / img.naturalHeight);
+}
+function fit() { const img = $("sheet"); if (!img.naturalWidth) return; size(S.scale ?? fitScale()); }
+function size(s) {
+  const img = $("sheet");
+  img.style.width = Math.round(img.naturalWidth * s) + "px";
+  $("zval").textContent = S.scale === null ? "fit" : Math.round(s / fitScale() * 100) + "%";
+}
+function zoom(f, cx, cy) {
+  const vp = $("vp"), img = $("sheet"); if (!img.naturalWidth) return;
+  const old = S.scale ?? fitScale();
+  const s = Math.min(3, Math.max(fitScale() * .5, old * f));
+  const px = cx ?? vp.clientWidth / 2, py = cy ?? vp.clientHeight / 2;
+  const ox = img.offsetLeft, oy = img.offsetTop;
+  const ax = (vp.scrollLeft + px - ox) / old, ay = (vp.scrollTop + py - oy) / old;
+  S.scale = s; size(s);
+  vp.scrollLeft = ax * s + img.offsetLeft - px; vp.scrollTop = ay * s + img.offsetTop - py;
+}
+$("prev").onclick = () => show(S.page - 1);
+$("next").onclick = () => show(S.page + 1);
+$("zin").onclick = () => zoom(1.4);
+$("zout").onclick = () => zoom(1 / 1.4);
+$("zfit").onclick = () => { S.scale = null; fit(); $("vp").scrollTo(0, 0); };
+$("vp").addEventListener("wheel", e => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  const r = $("vp").getBoundingClientRect();
+  zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+(() => {
+  const vp = $("vp"); let d = null;
+  vp.addEventListener("mousedown", e => { d = { x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop }; vp.classList.add("drag"); });
+  addEventListener("mousemove", e => { if (d) { vp.scrollLeft = d.l - (e.clientX - d.x); vp.scrollTop = d.t - (e.clientY - d.y); } });
+  addEventListener("mouseup", () => { d = null; vp.classList.remove("drag"); });
+})();
+addEventListener("resize", () => { if (S.scale === null) fit(); });
+(() => {                                                    // the conversation column's width: drag the divider
+  const sp = $("split"); let on = false;
+  sp.addEventListener("mousedown", e => { on = true; sp.classList.add("on"); e.preventDefault(); });
+  addEventListener("mousemove", e => {
+    if (!on) return;
+    const w = Math.max(340, Math.min(innerWidth - 320, innerWidth - e.clientX));
+    document.documentElement.style.setProperty("--chat-w", w + "px");
+    if (S.scale === null) fit();
+  });
+  addEventListener("mouseup", () => { on = false; sp.classList.remove("on"); });
+})();
+$("seg").querySelectorAll("button").forEach(b => b.onclick = () => view(b.dataset.v));
+function view(v) {
+  document.body.classList.toggle("show-sheet", v === "sheet");
+  $("seg").querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.v === v));
+  if (v === "sheet" && S.scale === null) setTimeout(fit, 0);
+}
+
+// ---------------------------------------------------------------- uploads: plus button, top button, drop anywhere
+function toast(m) { const t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 5000); }
+function pick() { $("file").click(); }
+function fileCard(name, status, isImg) {
+  const el = document.createElement("div"); el.className = "file";
+  el.innerHTML = `<div class="fi ${isImg ? "img" : ""}">${isImg ? "IMG" : "PDF"}</div><div style="min-width:0"><div class="nm"></div><div class="st"></div></div>`;
+  el.querySelector(".nm").textContent = name; el.querySelector(".st").textContent = status;
+  return el;
+}
+function upload(file) {
+  if (!file) return;
+  const isImg = !/\.pdf$/i.test(file.name);
+  const card = fileCard(file.name, "indexing the drawing", isImg);
+  const x = document.createElement("button"); x.className = "x"; x.innerHTML = "&times;"; x.title = "Remove";
+  card.appendChild(x);
+  $("atts").innerHTML = ""; $("atts").appendChild(card);
+  const fd = new FormData(); fd.append("file", file);
+  const job = { name: file.name, isImg, doc: null, error: null };
+  job.done = fetch("/api/upload", { method: "POST", body: fd })
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.detail || "The upload did not go through"); return j; })
+    .then(d => {
+      job.doc = d; S.docs.push(d); openDoc(d);
+      card.querySelector(".st").textContent = `${plural(d.pages, "page")} ready`;
+      if (innerWidth <= 900) view("chat");
+    })
+    .catch(e => { job.error = e.message; card.querySelector(".st").textContent = "could not be read"; toast(e.message); });
+  x.onclick = () => { if (S.pending === job) S.pending = null; card.remove(); sendState(); };
+  S.pending = job; sendState(); $("q").focus();
+}
+$("add").onclick = pick; $("upTop").onclick = pick; $("upMid").onclick = pick;
+$("file").onchange = e => { upload(e.target.files[0]); e.target.value = ""; };
+let dragDepth = 0;
+addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; $("drop").classList.add("hot"); $("box").classList.add("hot"); });
+addEventListener("dragover", e => e.preventDefault());
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").classList.remove("hot"); $("box").classList.remove("hot"); } });
+addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("drop").classList.remove("hot"); $("box").classList.remove("hot"); const f = e.dataTransfer.files[0]; if (f) upload(f); });
+
+// ---------------------------------------------------------------- the conversation
+function format(text) {
+  let h = esc(text);
+  h = h.replace(/\[pages? ([\d, ]+)\]/g, (m, l) => l.split(",").map(n => n.trim()).filter(Boolean)
+    .map(n => `<button class="pg" data-p="${n}">page ${n}</button>`).join(""));
+  h = h.replace(/ ?\(matches the PDF text\)/g, ' <span class="ok">✓ matches the PDF</span>');
+  h = h.replace(/ ?\(contains the PDF text ([^)]*)\)/g, ' <span class="ok">✓ contains $1</span>');
+  h = h.replace(/ - CHECK: the PDF text says /g, ' <span class="chk">⚠ CHECK · PDF says</span> ');
+  h = h.replace(/\(CHECK - they differ from the PDF\)/g, '<span class="chk">⚠ CHECK · they differ from the PDF</span>');
+  h = h.replace(/ \(nothing is guessed\)\./g, ' · nothing is guessed');
+  return h;
+}
+function you(text, job) {
+  const m = document.createElement("div"); m.className = "you";
+  if (job) m.appendChild(fileCard(job.name, job.doc ? plural(job.doc.pages, "page") : "", job.isImg));
+  if (text) { const q = document.createElement("div"); q.className = "q"; q.textContent = text; m.appendChild(q); }
+  $("log").appendChild(m); down();
+}
+function reading() {
+  const m = document.createElement("div"); m.className = "rs";
+  m.innerHTML = `<div class="reading">
+      <svg viewBox="0 0 120 18" fill="none"><path d="M2 12h116" stroke="var(--line-2)" stroke-width="2"/><path d="M2 12h116" stroke="var(--line-2)" stroke-width="7" stroke-dasharray="1.5 7"/>
+        <g class="car"><rect x="2" y="3" width="26" height="8" rx="3" fill="var(--signal)"/></g></svg>
+      <span>Reading the sheet <b class="secs">0 s</b></span></div>`;
+  $("log").appendChild(m); down();
+  const t0 = Date.now();
+  m._t = setInterval(() => { const s = m.querySelector(".secs"); if (s) s.textContent = Math.round((Date.now() - t0) / 1000) + " s"; }, 1000);
+  return m;
+}
+function reply(m, body, head = "Railsight") {
+  clearInterval(m._t);
+  m.innerHTML = `<div class="who">${head}</div>`;
+  m.appendChild(body);
+  m.querySelectorAll(".pg").forEach(b => b.onclick = () => { if (S.active) { show(+b.dataset.p); if (innerWidth <= 900) view("sheet"); } });
+  down();
+}
+function sayEl(html) { const d = document.createElement("div"); d.className = "say"; d.innerHTML = html; return d; }
+
+async function ask(question) {
+  if (S.busy) return;
+  const job = S.pending;
+  question = (question ?? "").trim();
+  if (!question && !job) return;
+  S.busy = true; S.pending = null; $("atts").innerHTML = "";
+  $("q").value = ""; grow(); sendState();
+  if (job) await job.done;
+  you(question, job && !job.error ? job : null);
+  const m = reading();
+  try {
+    if (job?.error) throw new Error(job.error);
+    const d = job?.doc || S.active;
+    if (!d) { reply(m, sayEl("Open a drawing first · use the <b>plus</b> button or drop a PDF on the left, then ask away")); return; }
+    if (!question) {
+      const box = document.createElement("div");
+      box.appendChild(sayEl(`I have indexed <b>${esc(d.name)}</b> · it is on the left, so you can check every answer against it`));
+      const pre = document.createElement("div"); pre.className = "ans"; pre.style.marginTop = "10px"; pre.textContent = d.note; box.appendChild(pre);
+      const chips = document.createElement("div"); chips.className = "chips"; chips.style.marginTop = "12px";
+      for (const s of d.suggestions || []) { const b = document.createElement("button"); b.textContent = s; b.onclick = () => ask(s); chips.appendChild(b); }
+      box.appendChild(chips);
+      reply(m, box); return;
+    }
+    const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: d.doc, question }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "Something went wrong");
+    const body = document.createElement("div");
+    const pre = document.createElement("div"); pre.className = "ans"; pre.innerHTML = format(j.answer); body.appendChild(pre);
+    if (j.crops.length) {
+      const film = document.createElement("div"); film.className = "film";
+      for (const c of j.crops) {
+        const s = document.createElement("div"); s.className = "shot"; s.title = c.caption;
+        s.innerHTML = `<img loading="lazy" alt=""><span></span>`;
+        s.querySelector("img").src = c.url + "&trim=1"; s.querySelector("span").textContent = c.caption;
+        s.onclick = () => { $("lbimg").src = c.url + "&trim=1"; $("lbcap").textContent = c.caption; $("lb").classList.add("on"); };
+        film.appendChild(s);
+      }
+      body.appendChild(film);
+    }
+    const ok = (j.answer.match(/\(matches the PDF text\)|\(contains the PDF text/g) || []).length;
+    const bad = (j.answer.match(/CHECK/g) || []).length;
+    const pages = /\[pages? \d/.test(j.answer) || d.pages === 1 ? "" :
+      j.pages.map(p => `<button class="pg" data-p="${p}">page ${p}</button>`).join("");
+    reply(m, body, `Railsight ${pages}` +
+      (ok ? `<span class="badge ok">✓ ${ok} matched</span>` : "") +
+      (bad ? `<span class="badge warn">⚠ ${bad} to check</span>` : "") +
+      (j.crops.length ? `<span class="badge time">${plural(j.crops.length, "crop")}</span>` : "") +
+      (j.seconds ? `<span class="badge time">${j.seconds} s</span>` : ""));
+    if (j.pages.length && S.active === d) show(j.pages[0], j.pages);
+  } catch (e) {
+    reply(m, sayEl(`<span style="color:var(--stop)">${esc(e.message)}</span>`));
+  } finally { S.busy = false; sendState(); }
+}
+
+// ---------------------------------------------------------------- the input box
+function grow() { const t = $("q"); t.style.height = "auto"; t.style.height = Math.min(180, t.scrollHeight) + "px"; t.style.overflowY = t.scrollHeight > 180 ? "auto" : "hidden"; }
+function sendState() { $("go").disabled = S.busy || (!$("q").value.trim() && !S.pending); }
+$("q").addEventListener("input", () => { grow(); sendState(); });
+$("q").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!$("go").disabled) ask($("q").value); } });
+$("go").onclick = () => ask($("q").value);
+$("clear").onclick = () => { resetLog(); $("q").focus(); };
+$("lb").onclick = () => $("lb").classList.remove("on");
+addEventListener("keydown", e => { if (e.key === "Escape") $("lb").classList.remove("on"); });
+
+resetLog();
+$("q").focus();
+</script>
+</body>
+</html>

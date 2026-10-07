@@ -10,7 +10,8 @@ What you need
 
 Files (all in this kit)
 - adapter.zip        the trained weights (keep it zipped)
-- app.py             web page to ask questions
+- chat_ui.py         chat page: upload a drawing, ask, compare with the drawing shown beside the chat (+ chat_ui/)
+- app.py             older web page with tabs (and the model loader the other tools use)
 - ask.py             ask one question from the command line
 - read_sheet.py      read a whole sheet image or PDF (uses sheet_reader.py, find_crop.py, band_table.py)
 - find_crop.py       finds what a question is about on the sheet, cuts the crop, asks the model
@@ -36,7 +37,16 @@ Quick test from the command line
   It should print "adapter attached to ... layers" first. If it says the adapter did not attach,
   upgrade transformers (pip install -U transformers).
 
-Web page
+Chat page (Railsight: the drawing beside a conversation)
+  python chat_ui.py --adapter adapter.zip            then open http://localhost:7860
+  (--4bit on small GPUs; --host 0.0.0.0 to open it from other machines on the network: http://<its IP>:7860)
+  "+", "Open drawing" or drag and drop opens a PDF (one page or many) or a sheet image, then ask anything printed
+  on it. The drawing fills the left (sheet tabs for pages, zoom with the buttons or Ctrl + wheel, drag to pan) so every
+  answer can be compared with it; "page 8" in an answer jumps there and the answer's pages are marked on the sheet tabs.
+  Below each answer are the crops the model read (click to enlarge); "matches the PDF" in green, CHECK in amber.
+  Files: chat_ui.py (the server, FastAPI - installed with gradio) and chat_ui/index.html (the page).
+
+Older web page (tabs)
   python app.py --adapter adapter.zip
   then open http://localhost:7860 in a browser on that machine (other machines on the network: http://<its IP>:7860).
   (add --4bit on small GPUs; add --share for a temporary public link - anyone with the link can use it)
