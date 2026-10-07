@@ -33,6 +33,8 @@ GRADIENT = re.compile(r"^(?:(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+|level|horizontal
 # the gradient band also abbreviates: "F 1 in 308 (-0.325%)", "R 1000" (= rise 1 in 1000); only read inside a band
 BAND_GRADIENT = re.compile(r"^[RF]\s+(?:1\s*in\s*)?[\d.,]+(?:\s*\([^)]*\))?$", re.I)
 FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
+# a curve named in a question: "curve 8", "curve no. 8", "C-8", "C. NO. - 8", "C.NO.17U" (not "CH 11540", "TPCC2")
+CURVE_ID = re.compile(r"\b(?:curve\s*(?:no\.?)?|c\.?\s*no\.?|c)\s*[-.:]?\s*(\d+[a-z]*)\b", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
 STOP = set("what is the of at on in a an and or to for give me tell show please value values written this that which "
            "sheet drawing crop side sides both left right before after its it does say says printed label point ch "
@@ -354,8 +356,10 @@ class Finder:
         """Questions about the bridges and curves printed on the sheet; None when the question is about neither."""
         ql = q.lower()
         objs = self.objects()
-        if re.search(r"\bcurves?\b", ql) and (objs.curves or not objs.bridges):
-            return self.curve_answer(q)
+        import band_table
+        named = CURVE_ID.search(q) and not re.search(r"\bcurves?\b", ql) and not band_table.asks_row(q)
+        if (re.search(r"\bcurves?\b", ql) or named) and (objs.curves or not objs.bridges):
+            return self.curve_answer(q)                     # "curve no. 8", "C-8", "C. NO. - 17U", "C-8 TPCC2"
         bridge_q = re.search(r"\bbr(?:idge)?s?\b|\bbr\.", ql)
         if not bridge_q or not objs.bridges:
             return None
@@ -484,7 +488,7 @@ class Finder:
         objs = self.objects()
         if not objs.curves:
             return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
-        cnum = re.search(r"\bc(?:urve)?\.?\s*(?:no\.?)?\s*[-.]?\s*(\d+[a-z]*)\b", q, re.I)
+        cnum = CURVE_ID.search(q)
         places = []
         nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]?)\b", q, re.I)]
         if nums:
@@ -496,8 +500,15 @@ class Finder:
                     places.append((f["chainage"], f"{b.name} at CH {fmt(f['chainage'])}{ok}"))
             if not places:
                 return f"No bridge {', '.join(nums)} is printed on this sheet (nothing is guessed)."
+        elif cnum and re.search(r"\b(bridges?|br)\b", ql):
+            return self.bridges_near_curve(cnum.group(1).upper())          # "which bridge is near curve 8"
+        elif re.search(r"\b(bridges?|br)\b", ql):                         # "bridge near the curve at CH 1245700"
+            cs = [c for ch, _ in self.places(q) for found in objs.curves_near(ch).values() for d, c in found if d == 0]
+            if cs:
+                return self.bridges_near_curve(None, list(dict.fromkeys(cs)))
         elif cnum and not re.search(r"\bnear|nearest|close|around|at\s+ch|\bat\s+\d", ql):
-            return self.curve_details(cnum.group(1).upper())
+            pt = re.search(r"\b(TPTC|TPCC|TC|CT|ST|TS|SC|CS)\s*-?\s*(\d)?\b", q, re.I)
+            return self.curve_details(cnum.group(1).upper(), (pt.group(1).upper() + (pt.group(2) or "")) if pt else None)
         else:
             places = [(ch, f"CH {fmt(ch)}" + (f" (\"{w.text}\")" if w is not None else "")) for ch, w in self.places(q)]
         if not places:
@@ -511,7 +522,9 @@ class Finder:
             out.append("\n".join(lines))
         return "\n\n".join(out)
 
-    def read_point(self, c, pt):
+    def read_point(self, c, pt, value=False):
+        """A curve point's label read by the model: "TPCC1 11367.15" (with CHECK if it differs from the PDF), or with
+        value=True (chainage read or None, that text)."""
         ch, w = c.points[pt]
         read, _ = self.read_parts([w], f"cv_{c.num}_{pt}")
         got = re.search(r"CH\.?\s*[:.]?\s*(\d[\d+.]*)", read, re.I)          # "AT Ch. 11367.15m" / "ATCH:11295m"
@@ -519,7 +532,8 @@ class Finder:
         val = n[0] if n else None
         ok = "" if self.s.source != "pdf" else "" if val is not None and abs(val - ch) < 1e-6 else \
             f" - CHECK: the PDF text says \"{w.text}\""
-        return f"{pt} {fmt(val) if val is not None else '? (not read)'}{ok}"
+        text = f"{pt} {fmt(val) if val is not None else '? (not read)'}{ok}"
+        return (val, text) if value else text
 
     def curve_position(self, c, ch, d):
         pts = sorted(c.points.items(), key=lambda t: t[1][0])
@@ -550,7 +564,58 @@ class Finder:
         nums = lambda t: re.findall(r"\d+(?:\.\d+)?", t)
         return " (matches the PDF text)" if nums(read) == nums(text) else f" - CHECK: the PDF text says \"{text}\""
 
-    def curve_details(self, num):
+    def bridges_near_curve(self, num, curves=None):
+        """The bridges on a curve (which part of it each is on), else the nearest bridge before and after it. Every
+        chainage in the answer is read by the model (the curve's points and each bridge's callout)."""
+        objs = self.objects()
+        cs = curves or [c for c in objs.curves if c.num == num]
+        if not cs:
+            have = ", ".join(dict.fromkeys(c.num for c in objs.curves))
+            return f"No curve {num} is printed on this sheet (curves here: {have}; nothing is guessed)."
+        if not objs.bridges:
+            return "No bridge callouts are printed on this sheet, so I cannot answer that from it."
+        out = []
+        for c in cs:
+            pts = sorted(c.points, key=lambda p: c.points[p][0])
+            reads = {p: self.read_point(c, p, value=True) for p in pts}
+            lo, hi = c.span
+            lines = [f"{c.name}" + (f" ({c.hand})" if c.hand else "") +
+                     f": {'; '.join(reads[p][1] for p in pts)}"]
+            on, before, after = [], [], []
+            for b in objs.bridges:
+                ch = b.fields()["chainage"]
+                if ch is None:
+                    continue
+                (on if lo <= ch <= hi else before if ch < lo else after).append((ch, b))
+            for ch, b in on:
+                read, _ = self.read_parts(b.best(), f"br_{b.name}")
+                f, ok = self.check_fields(b, read, ("chainage",))
+                part = "on the curve"
+                for a, z in zip(pts, pts[1:]):
+                    if c.points[a][0] <= ch <= c.points[z][0]:
+                        part = ("on its circular part" if a in ("TPCC1", "TC", "SC") and z in ("TPCC2", "CT", "CS")
+                                else "on its transition") + f" ({a} - {z})"
+                        break
+                lines.append(f"  {b.name} at CH {fmt(f['chainage']) if f['chainage'] is not None else '?'}{ok}: {part}")
+            if not on:
+                lines.append("  no bridge lies on this curve on this sheet")
+            for label, group, key in (("before", before, lambda t: -t[0]), ("after", after, lambda t: t[0])):
+                if not group:
+                    continue
+                near = sorted(group, key=key)
+                first = near[0][0]
+                for ch, b in (t for t in near if abs(t[0] - first) < 20):   # EX and PROP of the same bridge
+                    read, _ = self.read_parts(b.best(), f"br_{b.name}")
+                    f, ok = self.check_fields(b, read, ("chainage",))
+                    d = (lo - ch) if label == "before" else (ch - hi)
+                    lines.append(f"  nearest {label} it: {b.name} at CH {fmt(f['chainage']) if f['chainage'] is not None else '?'}{ok}"
+                                 f", {fmt(d)} m {label} the curve")
+            out.append("\n".join(lines))
+        return "\n\n".join(out)
+
+    def curve_details(self, num, point=None):
+        """A curve: where it starts and ends, its circular part, every point as the model read it, its details. With
+        point ("TPCC2"), that point first."""
         cs = [c for c in self.objects().curves if c.num == num]
         if not cs:
             have = ", ".join(dict.fromkeys(c.num for c in self.objects().curves))
@@ -558,8 +623,25 @@ class Finder:
         out = []
         for c in cs:
             pts = sorted(c.points, key=lambda p: c.points[p][0])
-            lines = [f"{c.name}" + (f" ({c.hand})" if c.hand else "") + ":",
-                     "  points: " + "; ".join(self.read_point(c, p) for p in pts)]
+            reads = {p: self.read_point(c, p, value=True) for p in pts}
+            lines = [f"{c.name}" + (f" ({c.hand})" if c.hand else "") + ":"]
+            if point:
+                hit = [p for p in pts if p == point or p.rstrip("12") == point]
+                lines.append("  " + ("; ".join(reads[p][1] for p in hit) if hit else
+                                     f"no {point} of this curve is printed on this sheet"))
+            v = {p: reads[p][0] for p in pts}
+            start = next((p for p in pts if p in ("TPTC1", "ST1", "TS1")), None)
+            end = next((p for p in pts if p in ("TPTC2", "TS2", "ST2")), None)
+            c1 = next((p for p in pts if p in ("TPCC1", "TC", "SC")), None)
+            c2 = next((p for p in pts if p in ("TPCC2", "CT", "CS")), None)
+            if start and end and v[start] is not None and v[end] is not None:
+                lines.append(f"  the curve runs from CH {fmt(v[start])} ({start}) to CH {fmt(v[end])} ({end})")
+            else:
+                lines.append(f"  only part of the curve is on this sheet (it continues on the "
+                             f"{'previous' if not start else 'next'} sheet)")
+            if c1 and c2 and v[c1] is not None and v[c2] is not None:
+                lines.append(f"  its circular part runs from CH {fmt(v[c1])} ({c1}) to CH {fmt(v[c2])} ({c2})")
+            lines.append("  points (each read by the model): " + "; ".join(reads[p][1] for p in pts))
             if c.details:
                 lines.append("  " + self.curve_summary(c))
             out.append("\n".join(lines))

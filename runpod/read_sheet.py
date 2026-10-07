@@ -182,7 +182,8 @@ def main():
         import band_table
         if args.find_only or find_crop.Finder.handles(q):
             return get_finder().answer(q)
-        if is_pdf and re.search(r"\bcurves?\b|\b(list|all|how many|which)\b.*\bbridges?\b", q, re.I):
+        if is_pdf and (re.search(r"\bcurves?\b|\b(list|all|how many|which)\b.*\bbridges?\b", q, re.I)
+                       or find_crop.CURVE_ID.search(q) and not band_table.asks_row(q)):
             a = get_finder().object_answer(q)                 # bridges by type / status, curves: read from the callouts
             if a:
                 return a
