@@ -131,8 +131,24 @@ class Book:
                      and not F.BRIDGE_REF.search(q) and not re.search(r"\bcurves?\b", ql))
 
     def list_bridges(self, q):
-        """The bridges asked for on every page, in page order: a bridge printed again at the start of the next sheet
-        is listed (and read) once, with all the pages it is on."""
+        """The JSON list of bridges (bridge_list.py) over every page: an item printed again at the start of the next
+        sheet is listed once; readings that differ from the PDF name their page."""
+        import bridge_list
+        rows, seen = [], set()
+        for i, f in enumerate(self.finders):
+            for g, w in bridge_list.rows(f, q):
+                key = (re.sub(r"\s", "", (w["br_no"] or "").upper()), w["chainage"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append((g, w, f"page {i + 1} · " if len(self.finders) > 1 else ""))
+        rows.sort(key=lambda t: bridge_list.chainage_value(t[1]["chainage"]))
+        name = Path(getattr(self, "display_name", self.path.name)).stem
+        return F.export_bridges(rows, self.out / "exports" / f"{name}_bridges.json", q, self)
+
+    def list_bridges_text(self, q):
+        """The bridges asked for on every page as text, in page order: a bridge printed again at the start of the
+        next sheet is listed (and read) once, with all the pages it is on."""
         found, what = [], ""
         for i, f in enumerate(self.finders):
             bs, what = f.bridges_asked(q)

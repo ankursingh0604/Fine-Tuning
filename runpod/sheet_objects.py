@@ -29,6 +29,9 @@ CURVE_PT = re.compile(r"^\W*(?P<ex>EX(?:G|IST(?:ING)?)?\.?\s*)?C\.?\s*(?:NO\.?)?
 CURVE_HEAD = re.compile(r"^\W*(?P<ex>EX(?:G)?\.?\s*)?C\.?\s*NO\.?\s*[-.]?\s*(?P<id>\d+[A-Z]*)\s*\((?P<hand>[LR])\w*\)\s*(?:\((?P<line>UP|DN)\))?"
                         r"\s*(?P<line2>UP|DN)?\W*$", re.I)
 CURVE_LINE = re.compile(r"^\W*(?:Δ|∆|DELTA|R|TL|CL|TRL|SHIFT|CA|CD|MSP|V|LS|L)\s*[:=]", re.I)
+CROSS_HEAD = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?\s*(?:BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*)?"
+                        r"(?P<label>(?P<kind>LC|ROB|RUB|FOB)\b\s*[-.]?\s*(?P<num>\d+[A-Z]*)?(?:\s*\([^)]*\))?)", re.I)
+XING_RE = re.compile(r"L-?XING\s*NO\.?\s*(?P<num>\d+[A-Z]*)", re.I)
 LONE_PT = re.compile(r"^\W*(?P<pt>ST|TS|TC|CT|SC|CS)\s*(?:AT\s*)?CH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
 
 
@@ -71,8 +74,8 @@ def norm_type(t):
 
 
 class Bridge:
-    def __init__(self, num, status):
-        self.num, self.status = num, status
+    def __init__(self, num, status, kind="BR", label=None):
+        self.num, self.status, self.kind, self.label = num, status, kind, label or num
         self.labels = []          # [[Word, ...]] every printed copy of the callout, each as its lines
         self.levels = []          # [[Word, ...]] level blocks (BR NO. head + EX. FL / PROP. FL / HFL / BL lines)
 
@@ -129,8 +132,9 @@ class Curve:
 class SheetObjects:
     def __init__(self, words):
         self.words = words
-        self.bridges, self.curves = [], []
+        self.bridges, self.curves, self.crossings = [], [], []
         self._bridges()
+        self._crossings()
         self._curves()
 
     def next_line(self, w, ok):
@@ -198,6 +202,62 @@ class SheetObjects:
                 continue
             out.append(b)
         return out
+
+    # ------------------------------------------------------------ level crossings, ROBs, RUBs, FOBs
+    def _crossings(self):
+        """Callouts of level crossings and road bridges ("C/L OF EXG. LC 137 BT ROAD", "C/L OF EXG. ROB-15 (NH 552)",
+        "C/L OF EXG. BR. NO. LC-226 ...", "'SPL' CLASS L-XING NO. 10 (MANNED)", "PROPOSED ROB AT CH : 11602M.") and
+        their level blocks ("EXG. LC 137" / "EXG FL = ..." / "FL = ..."). A numbered bridge that mentions an LC
+        ("BR. NO. 578AX(LC-247)") stays a bridge; a note such as "ROB PROPOSED BY IR. SPACE AVAILABLE" is a line of a
+        callout, not an item."""
+        def head(t):
+            if re.match(r"^\s*\(", t):                 # "(RUB/LHS) AT CH: ..." ends a bridge's callout
+                return None
+            m, x = CROSS_HEAD.match(t), XING_RE.search(t)
+            br = BR_RE.search(t)
+            if br and re.match(r"\d", br.group(1)):
+                return None
+            if x:
+                return "L-XING", x.group("num").upper(), x.group()
+            if m:
+                label = re.sub(r"\s+", " ", m.group("label")).strip()
+                return m.group("kind").upper(), (m.group("num") or "").upper(), label
+            return None
+
+        def is_item(t):                                # starts a new item: not a line of this callout
+            h = head(t)
+            return bool(h and (h[1] or re.match(r"^\W*C/L\s*OF", t, re.I))) or bool(BR_RE.search(t))
+
+        by, levels, used = {}, {}, set()
+        for w in self.words:
+            h = head(w.text)
+            if not h or id(w) in used:
+                continue
+            kind, num, label = h
+            cl = bool(re.match(r"^\W*C/L\s*OF", w.text, re.I))
+            if not cl and not AT_CH.search(w.text):    # a level block: the item's name alone, level lines under it
+                parts = self.lines_from(w, lambda t: bool(LEVEL_LINE.match(t)), lambda t: False, 8)
+                if len(parts) > 1:
+                    levels.setdefault((kind, num), []).append(parts)
+                    continue
+            if not (num or cl or AT_CH.search(w.text)):
+                continue
+            parts = self.lines_from(w, lambda t: not is_item(t) and not LEVEL_LINE.match(t), lambda t: bool(AT_CH.search(t)), 5)
+            text = joined(parts).text
+            ch = AT_CH.search(text)
+            if not ch:
+                continue
+            used.update(id(p) for p in parts)
+            pre = text[:text.upper().find(kind) if kind in text.upper() else 0].upper()
+            st = "existing" if re.search(r"\bEX(?:G|IST\w*)?\b", pre) else "proposed" if re.search(r"\bPROP", pre) else None
+            key = (kind, num or "@" + ch.group(1).strip(), st)
+            if key not in by:
+                by[key] = Bridge(num or None, st, kind, label)
+            by[key].labels.append(parts)
+        for (kind, num, st), b in by.items():
+            b.levels = levels.get((kind, num), []) if not num.startswith("@") else []
+            self.crossings.append(b)
+        self.crossings.sort(key=lambda b: numbers(AT_CH.search(joined(b.best()).text).group(1))[0])
 
     # ------------------------------------------------------------ curves
     def _curves(self):

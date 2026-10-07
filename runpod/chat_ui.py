@@ -104,14 +104,28 @@ class Docs:
         with self.model_lock:
             t = time.time()
             marks = book.crop_marks()
+            book.last_export = None
             text = book.answer(q)
+            export = book.last_export
             crops = book.crops_since(marks)
             seconds = time.time() - t
         pages = sorted({int(n) for m in re.findall(r"\[pages? ([\d, ]+)\]", text) for n in re.findall(r"\d+", m)} |
                        {int(p.parent.parent.name[4:]) for p in crops if p.parent.parent.name.startswith("page")})
-        return {"answer": text, "pages": pages, "seconds": round(seconds, 1),
-                "crops": [{"url": f"/api/doc/{doc}/file?path={p.relative_to(book.out).as_posix()}", "caption": caption(p)}
-                          for p in crops]}
+        out = {"answer": text, "pages": pages, "seconds": round(seconds, 1),
+               "crops": [{"url": f"/api/doc/{doc}/file?path={p.relative_to(book.out).as_posix()}", "caption": caption(p)}
+                         for p in crops]}
+        if export:                       # the bridge list: a JSON file to download, the answer says what is in it
+            import bridge_list
+            rel = export["path"].relative_to(book.out).as_posix()
+            out["file"] = {"name": export["path"].name, "url": f"/api/doc/{doc}/file?path={rel}&download=1",
+                           "count": len(export["rows"]), "issues": export["issues"], "json": bridge_list.dump(export["rows"])}
+            n = len(export["rows"])
+            out["answer"] = (f"{n} item{'s' if n != 1 else ''} (bridges, level crossings, ROBs and RUBs) in chainage "
+                             "order, every value read by the model from its crop\n" +
+                             ("Every value matches the PDF text" if not export["issues"] else
+                              "CHECK · these readings differ from the PDF text:\n" +
+                              "\n".join("  " + i for i in export["issues"])))
+        return out
 
     def file(self, doc, rel):
         book = self.get(doc)
@@ -176,7 +190,7 @@ def create_app(docs):
             raise HTTPException(404, str(e))
 
     @app.get("/api/doc/{doc}/file")
-    async def file(doc: str, path: str, trim: int = 0):
+    async def file(doc: str, path: str, trim: int = 0, download: int = 0):
         from fastapi.responses import Response
         try:
             p = docs.file(doc, path)
@@ -184,7 +198,7 @@ def create_app(docs):
             raise HTTPException(404, str(e))
         if trim:
             return Response(await run_in_threadpool(docs.trimmed, p), media_type="image/png")
-        return FileResponse(p)
+        return FileResponse(p, filename=p.name if download else None)
 
     return app
 

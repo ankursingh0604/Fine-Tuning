@@ -153,6 +153,19 @@
   .shot img { width: 100%; height: 92px; object-fit: contain; background: #fff; display: block; padding: 6px; }
   .shot span { display: block; padding: 6px 8px 7px; color: var(--muted); font: 500 10.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  .export { margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); overflow: hidden; }
+  .export .top { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+  .export .jf { width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center; font: 700 10px var(--mono); color: #1a1205; background: var(--signal); flex: none; }
+  .export .meta { min-width: 0; flex: 1; }
+  .export .meta b { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .export .meta span { color: var(--muted); font: 500 11.5px var(--mono); }
+  .export a.dl { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 9px; background: var(--signal); color: #1a1205; font-weight: 600; font-size: 13px; text-decoration: none; flex: none; }
+  .export a.dl:hover { filter: brightness(1.08); }
+  .export button.peek { height: 32px; padding: 0 10px; border-radius: 9px; color: var(--muted); border: 1px solid var(--line-2); font-size: 13px; flex: none; }
+  .export button.peek:hover { color: var(--text); }
+  .export pre { margin: 0; max-height: 340px; overflow: auto; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--bg); font: 12.5px/1.55 var(--mono); color: var(--text); display: none; }
+  .export.open pre { display: block; }
+  .export pre .k { color: var(--blue); } .export pre .s { color: var(--go); } .export pre .n { color: var(--faint); }
   .reading { display: flex; align-items: center; gap: 12px; color: var(--muted); font: 500 12px var(--mono); letter-spacing: .06em; }
   .reading svg { width: 120px; height: 18px; }
   .reading .car { animation: shunt 1.6s ease-in-out infinite alternate; }
@@ -490,6 +503,22 @@ function reply(m, body, head = "Railsight") {
   m.querySelectorAll(".pg").forEach(b => b.onclick = () => { if (S.active) { show(+b.dataset.p); if (innerWidth <= 900) view("sheet"); } });
   down();
 }
+function exportCard(f) {                                   // the bridge list as a JSON file: download it or look inside
+  const c = document.createElement("div"); c.className = "export";
+  c.innerHTML = `<div class="top"><div class="jf">JSON</div><div class="meta"><b></b><span></span></div>
+      <button class="peek">Preview</button>
+      <a class="dl" download><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>Download</a></div><pre></pre>`;
+  c.querySelector("b").textContent = f.name;
+  c.querySelector(".meta span").textContent = `${plural(f.count, "item")} · ${f.issues.length ? plural(f.issues.length, "value") + " to check" : "all values match the PDF"}`;
+  c.querySelector("a.dl").href = f.url;
+  c.querySelector("pre").innerHTML = esc(f.json)
+    .replace(/(&quot;[a-z_]+&quot;)(?=:)/g, '<span class="k">$1</span>')
+    .replace(/: (&quot;.*?&quot;)(,?)$/gm, ': <span class="s">$1</span>$2')
+    .replace(/: null(,?)$/gm, ': <span class="n">null</span>$1');
+  const peek = c.querySelector(".peek");
+  peek.onclick = () => { c.classList.toggle("open"); peek.textContent = c.classList.contains("open") ? "Hide" : "Preview"; };
+  return c;
+}
 function sayEl(html) { const d = document.createElement("div"); d.className = "say"; d.innerHTML = html; return d; }
 
 async function ask(question) {
@@ -520,6 +549,7 @@ async function ask(question) {
     if (!r.ok) throw new Error(j.detail || "Something went wrong");
     const body = document.createElement("div");
     const pre = document.createElement("div"); pre.className = "ans"; pre.innerHTML = format(j.answer); body.appendChild(pre);
+    if (j.file) body.appendChild(exportCard(j.file));
     if (j.crops.length) {
       const film = document.createElement("div"); film.className = "film";
       for (const c of j.crops) {
@@ -531,8 +561,8 @@ async function ask(question) {
       }
       body.appendChild(film);
     }
-    const ok = (j.answer.match(/\(matches the PDF text\)|\(contains the PDF text/g) || []).length;
-    const bad = (j.answer.match(/CHECK/g) || []).length;
+    const ok = j.file ? (j.file.issues.length ? 0 : j.file.count) : (j.answer.match(/\(matches the PDF text\)|\(contains the PDF text/g) || []).length;
+    const bad = j.file ? j.file.issues.length : (j.answer.match(/CHECK/g) || []).length;
     const pages = /\[pages? \d/.test(j.answer) || d.pages === 1 ? "" :
       j.pages.map(p => `<button class="pg" data-p="${p}">page ${p}</button>`).join("");
     reply(m, body, `Railsight ${pages}` +

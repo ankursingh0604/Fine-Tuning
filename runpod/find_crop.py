@@ -223,6 +223,27 @@ def open_sheet(path, out_dir, page_no=0, lazy=False):
     return Sheet(img, words, "ocr", path, note)
 
 
+def export_bridges(rows, path, q, owner):
+    """Write [(row read by the model, row from the PDF text, where)] as the JSON list of bridges; the answer says how
+    many, where the file is, and every value the model read differently from the PDF. owner.last_export keeps the file
+    and rows for a UI."""
+    import bridge_list
+    got = [g for g, _, _ in rows]
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = bridge_list.dump(got)
+    path.write_text(text, encoding="utf-8")
+    issues = [line for g, w, where in rows for line in bridge_list.problems(g, w, where)]
+    owner.last_export = {"path": path, "rows": got, "issues": issues}
+    if not got:
+        return f"No bridges matching that are printed here, so the JSON list is empty ({path.name})"
+    head = (f"{len(got)} item{'s' if len(got) != 1 else ''} (bridges, level crossings, ROBs and RUBs), in chainage order · "
+            f"saved as {path}")
+    tail = ("Every value was read by the model and matches the PDF text" if not issues else
+            "CHECK · these readings differ from the PDF text:\n" + "\n".join("  " + i for i in issues))
+    return f"{head}\n{text}\n{tail}"
+
+
 # ======================================================================== crops
 def upright(img, d):
     """A crop of text written along direction d (image x right, y down) turned so the text reads left to right, as on
@@ -424,14 +445,11 @@ class Finder:
                    f" - CHECK: the PDF text says \"{sheet_objects.joined(b.best()).text}\"")
 
     def list_bridges(self, q):
-        bs, what = self.bridges_asked(q)
-        if not bs:
-            allb = ", ".join(f"{b.name} ({b.fields()['type']})" for b in self.objects().bridges)
-            return f"No {what + ' ' if what else ''}bridges are printed on this sheet. Its bridges: {allb}."
-        out = [f"{len(bs)} {what + ' ' if what else ''}bridge callout(s) on this sheet, in chainage order "
-               "(each read by the model from its own crop):"]
-        out += ["  " + self.bridge_line(b) for b in bs]
-        return "\n".join(out)
+        """The bridge list as a JSON file in the agreed format (bridge_list.py), every value read by the model."""
+        import bridge_list
+        rows = [(g, w, "") for g, w in bridge_list.rows(self, q)]
+        name = Path(getattr(self.s, "pdf", None) or self.s.path).stem
+        return export_bridges(rows, self.out.parent / f"{name}_bridges.json", q, self)
 
     def bridges_asked(self, q):
         """([Bridge], description): the bridges a list question asks for (by status and type)."""

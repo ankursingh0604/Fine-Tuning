@@ -16,7 +16,8 @@ Files (all in this kit)
 - read_sheet.py      read a whole sheet image or PDF (uses sheet_reader.py, find_crop.py, band_table.py)
 - find_crop.py       finds what a question is about on the sheet, cuts the crop, asks the model
 - band_table.py      finds the data band of any L-section (rows, headings, chainages)
-- sheet_objects.py   finds the bridges (callouts, level blocks) and curves (points, details) printed on a sheet
+- sheet_objects.py   finds the bridges, level crossings, ROBs (callouts, level blocks) and curves on a sheet
+- bridge_list.py     the list of all bridges as JSON in the agreed format
 - pdf_book.py        all pages of a multi-page PDF asked as one drawing (each question goes to its page)
 - sheet_reader.py    the whole-sheet reader: cuts the sheet into pieces the model can read
 - sheet_qa.py        answers questions about a sheet from what read_sheet.py read
@@ -44,6 +45,12 @@ Chat page (Railsight: the drawing beside a conversation)
   on it. The drawing fills the left (sheet tabs for pages, zoom with the buttons or Ctrl + wheel, drag to pan) so every
   answer can be compared with it; "page 8" in an answer jumps there and the answer's pages are marked on the sheet tabs.
   Below each answer are the crops the model read (click to enlarge); "matches the PDF" in green, CHECK in amber.
+  "List all bridges" (or "list all RCC bridges", "list existing bridges" ...) gives a JSON file to download with one
+  object per bridge, level crossing, ROB and RUB, in chainage order, exactly these keys (bridge_list.py):
+    br_no, chainage (km+m), exg_structure, exg_configuration, description, exs_fl,
+    prop_structure, prop_type, prop_configuration, prop_fl, prop_bed_level      (null where the drawing prints nothing)
+  Every value is the model's reading of the item's callout and level block; values it read differently from the PDF
+  are listed in the answer (not in the file). read_sheet.py writes the same file next to its crops.
   Files: chat_ui.py (the server, FastAPI - installed with gradio) and chat_ui/index.html (the page).
 
 Older web page (tabs)
