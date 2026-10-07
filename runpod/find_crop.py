@@ -33,6 +33,8 @@ GRADIENT = re.compile(r"^(?:(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+|level|horizontal
 # the gradient band also abbreviates: "F 1 in 308 (-0.325%)", "R 1000" (= rise 1 in 1000); only read inside a band
 BAND_GRADIENT = re.compile(r"^[RF]\s+(?:1\s*in\s*)?[\d.,]+(?:\s*\([^)]*\))?$", re.I)
 FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
+# a bridge named in a question: "Br. No. 15", "BR NO. 575A", "EXG. BR. NO. 320UP", "bridge 560"
+BRIDGE_REF = re.compile(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]{0,2})\b", re.I)
 # a curve named in a question: "curve 8", "curve no. 8", "C-8", "C. NO. - 8", "C.NO.17U" (not "CH 11540", "TPCC2")
 CURVE_ID = re.compile(r"\b(?:curve\s*(?:no\.?)?|c\.?\s*no\.?|c)\s*[-.:]?\s*(\d+[a-z]*)\b", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
@@ -194,7 +196,9 @@ def open_sheet(path, out_dir, page_no=0):
             page.get_pixmap(dpi=dpi).save(png)
         note = (f"{path.name}: page {page_no + 1} of {len(doc)}, rendered at {dpi} dpi so its text is as tall as on the trained "
                 f"sheets (median text {med:.1f} pt); text positions from the PDF (exact).")
-        return Sheet(Image.open(png).convert("RGB"), _pdf_words(page, dpi / 72), "pdf", png, note)
+        sheet = Sheet(Image.open(png).convert("RGB"), _pdf_words(page, dpi / 72), "pdf", png, note)
+        sheet.pdf, sheet.page_no = path, page_no
+        return sheet
     img = Image.open(path).convert("RGB")
     words = _ocr_words(img, out_dir / f"{path.stem}_ocr.json")
     note = f"{path.name}: image; text positions from the local OCR ({len(words)} pieces of text)." if words else \
@@ -364,7 +368,7 @@ class Finder:
         if not bridge_q or not objs.bridges:
             return None
         import band_table
-        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]?)\b", q, re.I)]
+        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
         if not nums:
             if re.search(r"\b(list|all|how many|which|what|show|every|count)\b", ql):
                 return self.list_bridges(q)
@@ -433,7 +437,7 @@ class Finder:
             if not bs:
                 there = ", ".join(b.name for b in self.objects().find_bridges(num=num)) or "none"
                 out.append(f"No {(st + ' ') if st else ''}bridge {num} is printed on this sheet "
-                           f"(bridge {num} callouts here: {there}; nothing is guessed).")
+                           f"(bridge {num} callouts here: {there}; nothing is guessed)." + self.on_other_pages(num))
                 continue
             if want - {"levels"} or not want:
                 full = not want - {"levels"}
@@ -490,7 +494,7 @@ class Finder:
             return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
         cnum = CURVE_ID.search(q)
         places = []
-        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]?)\b", q, re.I)]
+        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
         if nums:
             st = self.asked_status(ql)
             for b in (b for n in nums for b in objs.find_bridges(num=n, status=st)):
@@ -563,6 +567,28 @@ class Finder:
             return ""
         nums = lambda t: re.findall(r"\d+(?:\.\d+)?", t)
         return " (matches the PDF text)" if nums(read) == nums(text) else f" - CHECK: the PDF text says \"{text}\""
+
+    def on_other_pages(self, num):
+        """For a multi-page PDF: the other pages that print bridge `num` (so the user can open that page)."""
+        pdf = getattr(self.s, "pdf", None)
+        if pdf is None:
+            return ""
+        import pymupdf
+        import sheet_objects
+        doc = pymupdf.open(pdf)
+        pages = []
+        for i, page in enumerate(doc):
+            if i == self.s.page_no:
+                continue
+            for m in sheet_objects.BR_RE.finditer(page.get_text()):
+                n = m.group(1).upper()
+                if n == num or re.fullmatch(re.escape(num) + r"(UP|DN)", n):
+                    pages.append(i + 1)
+                    break
+        if not pages:
+            return ""
+        p = ", ".join(map(str, pages))
+        return f" It is printed on page {p} of this PDF - open that page with --page {pages[0]}."
 
     def bridges_near_curve(self, num, curves=None):
         """The bridges on a curve (which part of it each is on), else the nearest bridge before and after it. Every
@@ -665,7 +691,7 @@ class Finder:
         chainage printed in the label it names ("cut/fill at C-8 TPCC2" -> "C-8. TPCC2 AT Ch. 11701.654m."). Labels
         tying for the best match each count ("BR NO. 15" -> the EX. and the PROP. bridge, at their own chainages)."""
         # a bridge named in the question: the chainage printed in its callout (all its lines joined)
-        nums = [n.upper() for n in re.findall(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]{0,2})\b", q, re.I)]
+        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
         if nums and self.objects().bridges:
             import sheet_objects
             out = []
