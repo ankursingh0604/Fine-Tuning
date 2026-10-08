@@ -34,7 +34,8 @@ GRADIENT = re.compile(r"^(?:(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+|level|horizontal
 BAND_GRADIENT = re.compile(r"^[RF]\s+(?:1\s*in\s*)?[\d.,]+(?:\s*\([^)]*\))?$", re.I)
 FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
 # a bridge named in a question: "Br. No. 15", "BR NO. 575A", "EXG. BR. NO. 320UP", "bridge 560"
-BRIDGE_REF = re.compile(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+(?:[a-z]{1,3}|\s(?:up|dn))?)\b", re.I)    # 239AUP, "214 UP"
+# "Br. No. 239AUP", "bridge 214 UP", and a number with UP / DN on its own: "FL value for 224UP"
+BRIDGE_REF = re.compile(r"(?:\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*|\b(?=\d{1,4}A?(?:UP|DN)\b))(\d+(?:[a-z]{1,3}|\s(?:up|dn))?)\b", re.I)
 # a curve named in a question: "curve 8", "curve no. 8", "C-8", "C. NO. - 8", "C.NO.17U" (not "CH 11540", "TPCC2")
 CURVE_ID = re.compile(r"\b(?:curve\s*(?:no\.?)?|c\.?\s*no\.?|c)\s*[-.:]?\s*(\d+[a-z]*)\b", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
@@ -305,7 +306,7 @@ class Finder:
             gp = self.grade_points(q)
             if gp:
                 return gp
-        obj = self.object_answer(q)
+        obj = self.crossing_answer(q) or self.object_answer(q)
         if obj:
             return obj
         band = self.band_answer(q)
@@ -406,7 +407,7 @@ class Finder:
         named = CURVE_ID.search(q) and not re.search(r"\bcurves?\b", ql) and not band_table.asks_row(q)
         if (re.search(r"\bcurves?\b", ql) or named) and (objs.curves or not objs.bridges):
             return self.curve_answer(q)                     # "curve no. 8", "C-8", "C. NO. - 17U", "C-8 TPCC2"
-        bridge_q = re.search(r"\bbr(?:idge)?s?\b|\bbr\.", ql)
+        bridge_q = re.search(r"\bbr(?:idge)?s?\b|\bbr\.|\b\d{1,4}a?(?:up|dn)\b", ql)      # (also a bare "224UP")
         if not bridge_q or not objs.bridges:
             return None
         import band_table
@@ -480,6 +481,10 @@ class Finder:
         out = []
         for num in dict.fromkeys(nums):
             bs = self.objects().find_bridges(num=num, status=st)
+            if not bs and want == {"levels"}:
+                # one level block serves both: "proposed FL of 229UP" when only the existing callout is printed (the
+                # block's 3RD LINE FL is the proposed one); the status then only picks which FL is shown
+                bs = [b for b in self.objects().find_bridges(num=num) if b.levels]
             if not bs:
                 there = ", ".join(b.name for b in self.objects().find_bridges(num=num)) or "none"
                 out.append(f"No {(st + ' ') if st else ''}bridge {num} is printed on this sheet "
@@ -504,33 +509,78 @@ class Finder:
                 if not blocks:
                     out.append(f"Br. No. {num}: no level block (FL / HFL / BL) is printed for it on this sheet.")
                     continue
-                read, lab = self.read_parts(blocks[0], f"brlv_{num}")
-                got = dict(sheet_objects.LEVEL_KV.findall(read))
-                true = dict(sheet_objects.LEVEL_KV.findall(lab.text))
-                key = lambda k: re.sub(r"[^A-Z]", "", k.upper())
-                got = {key(k): v for k, v in got.items()}
-                # the levels asked for; none named -> all of them. "FL" covers EX. FL / EXG FL, PROP. FL, FL, MIN FL REQ.
-                cat = lambda k2: "HFL" if k2 == "HFL" else "BL" if k2 == "BL" else "FL" if "FL" in k2 else k2
-                which = set()
-                if re.search(r"\bh\.?f\.?l\b", ql):
-                    which.add("HFL")
-                if re.search(r"\bb\.?l\b|\bbed\b", ql):
-                    which.add("BL")
-                if re.search(r"\bf\.?l\b|formation", ql):
-                    which.add("FL")
-                lines = []
-                for k, v in true.items():
-                    k2 = key(k)
-                    if which and cat(k2) not in which:
-                        continue
-                    if cat(k2) == "FL" and (st == "existing" and k2.startswith("PROP") or st == "proposed" and k2.startswith("EX")):
-                        continue
-                    r = got.get(k2)
-                    lines.append(f"  {k.strip()}: {r if r is not None else '? (not read)'}" +
-                                 ("" if self.s.source != "pdf" else " (matches the PDF text)" if r is not None and float(r) == float(v)
-                                  else f" - CHECK: the PDF text says {v}"))
-                out.append(f"Br. No. {num} level block (read by the model):\n" + "\n".join(lines))
+                out.append(self.level_answer(blocks[0], f"brlv_{num}", f"Br. No. {num}", ql, st))
         return "\n\n".join(out)
+
+    def level_answer(self, block, what, name, ql, st):
+        """The values of a level block the question asks for, as the model read them, each checked against the PDF text.
+        Labels as printed: FL / EXG FL / PROP. FL / FL UP LINE / FL 3RD LINE, RL ..., BED LEVEL, OHFL, ROAD LEVEL, HC, VC."""
+        import sheet_objects
+        read, lab = self.read_parts(block, what)
+        # a bridge number's own UP / DN ("BR. NO. 575 UP" / "EXG FL = ...") is not part of the first label
+        strip = lambda pairs: {re.sub(r"^(?:UP|DN)\s+(?=\S)", "", k.strip(), flags=re.I): v for k, v in pairs}
+        got = strip(sheet_objects.BLOCK_KV.findall(read))
+        true = strip(sheet_objects.BLOCK_KV.findall(lab.text))
+        key = lambda k: re.sub(r"[^A-Z0-9]", "", k.upper())
+        got = {key(k): v for k, v in got.items()}
+
+        def cat(k2):
+            """FL covers EX. FL / EXG FL, PROP. FL, FL, MIN FL REQ., FL UP LINE, FL 3RD LINE; RL the rail levels."""
+            if k2.endswith("HFL"):
+                return "HFL"
+            if k2 in ("BL", "BEDLEVEL", "BEDLVL"):
+                return "BL"
+            if "ROAD" in k2:
+                return "ROAD"
+            if k2 in ("HC", "VC"):
+                return k2
+            if re.match(r"(EXG?|PROP\w*|MIN)?FL", k2):
+                return "FL"
+            if k2.startswith("RL"):
+                return "RL"
+            return k2
+        # the levels asked for; none named -> all of them
+        which = {c for c, pat in (("HFL", r"\bh\.?f\.?l\b|flood"), ("BL", r"\bb\.?l\b|\bbed\b"), ("FL", r"\bf\.?l\b|formation"),
+                                  ("RL", r"\br\.?l\b|rail\s*level"), ("ROAD", r"road\s*level"),
+                                  ("HC", r"\bh\.?c\b|horizontal\s*clearance"), ("VC", r"\bv\.?c\b|vertical\s*clearance"))
+                 if re.search(pat, ql)}
+        lines = []
+        for k, v in true.items():
+            k2 = key(k)
+            if which and cat(k2) not in which:
+                continue
+            # existing: not the proposed line ("PROP. FL", "FL 3RD LINE"); proposed: not the existing ("EXG FL", "FL UP LINE")
+            newline = k2.startswith("PROP") or re.search(r"\d(ST|ND|RD|TH)LINE", k2)
+            oldline = k2.startswith("EX") or re.search(r"(UP|DN|DOWN)LINE", k2)
+            if cat(k2) in ("FL", "RL") and (st == "existing" and newline or st == "proposed" and oldline):
+                continue
+            if st == "existing" and k2 == "FL" and any(key(x).startswith("EX") for x in true):
+                continue                                   # a plain "FL" beside an "EXG FL" is the proposed one
+            r = got.get(k2)
+            lines.append(f"  {k.strip()}: {r if r is not None else '? (not read)'}" +
+                         ("" if self.s.source != "pdf" else " (matches the PDF text)" if r is not None and float(r) == float(v)
+                          else f" - CHECK: the PDF text says {v}"))
+        if not lines:
+            lines = [f"  (none of the values asked for is printed in it; it gives: {', '.join(k.strip() for k in true) or 'nothing'})"]
+        return f"{name} level block (read by the model):\n" + "\n".join(lines)
+
+    LEVEL_Q = r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?|r\.?l|h\.?c|v\.?c|clearance|road\s*level)\b"
+
+    def crossing_answer(self, q):
+        """Levels and clearances of a level crossing / ROB / RUB ("HC and VC of LC 123", "FL at LC-117"); None otherwise."""
+        import sheet_objects
+        ql = q.lower()
+        m = re.search(r"\b(lc|rob|rub|fob)\s*(?:no\.?)?\s*[-.]?\s*(\d+[a-z]*)\b", ql)
+        if not m or not re.search(self.LEVEL_Q, ql):
+            return None
+        kind, num = m.group(1).upper(), m.group(2).upper()
+        cs = [c for c in self.objects().crossings if c.kind == kind and (c.num or "") == num]
+        if not cs:
+            return None
+        c = next((c for c in cs if c.levels), None)
+        if not c:
+            return f"{kind} {num}: no level block (FL / road level / HC / VC) is printed for it on this sheet."
+        return self.level_answer(c.levels[0], f"xinglv_{c.label}", f"{kind} {num}", ql, self.asked_status(ql))
 
     def curve_answer(self, q):
         """'Which curve is near Br. No. 15' / 'curve at CH 11384' / 'details of curve 8'."""

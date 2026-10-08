@@ -39,6 +39,11 @@ CURVE_HEAD = re.compile(r"^\W*(?P<ex>EX(?:G)?\.?\s*)?C\.?\s*NO\.?\s*[-.]?\s*(?P<
 CURVE_LINE = re.compile(r"^\W*(?:Δ|∆|DELTA|R|TL|CL|TRL|SHIFT|CA|CD|MSP|V|LS|L)\s*[:=]", re.I)
 CROSS_HEAD = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?\s*(?:BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*)?"
                         r"(?P<label>(?P<kind>LC|ROB|RUB|FOB)\b\s*[-.]?\s*(?P<num>\d+[A-Z]*)?(?:\s*\([^)]*\))?)", re.I)
+# every "label = value" of a level block, whatever the label: "FL = ...", "EXG FL = ...", "FL 3RD LINE = ...",
+# "RL UP LINE = ...", "BED LEVEL = ...", "OHFL = ...", "EXG.ROAD LEVEL = ...", "HC = ...", "VC = ..." (a label is words and
+# line ordinals; the bridge number before it, "224UP", is not part of it)
+BLOCK_KV = re.compile(r"(?<![A-Z0-9.])((?:[A-Z][A-Z.]*|[1-9](?:ST|ND|RD|TH))(?:[ \t]*(?:[A-Z][A-Z./]*|[1-9](?:ST|ND|RD|TH)))*)\s*[:=]\s*(-?\d+(?:\.\d+)?)",
+                      re.I)
 XING_RE = re.compile(r"L-?XING\s*NO\.?\s*(?P<num>\d+[A-Z]*)", re.I)
 LONE_PT = re.compile(r"^\W*(?P<pt>ST|TS|TC|CT|SC|CS)\s*(?:AT\s*)?CH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
 
