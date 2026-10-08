@@ -13,11 +13,19 @@ import re
 
 from find_crop import Word, numbers, union
 
-# the number with at most two letters after it (575A, 578AX, 224UP) - a reading without spaces ("575DNRCCSLAB") keeps 575
-BR_RE = re.compile(r"\bBR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*(\d+(?:[A-Z]{1,2}(?![A-Z]))?)", re.I)
+# the number with at most three letters after it (575A, 578AX, 224UP, 239AUP) or a spaced "214 UP" - a reading without
+# spaces ("575DNRCCSLAB") keeps 575. Use bridge_num() for the number: "214 UP" -> "214UP"
+BR_RE = re.compile(r"\bBR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*(\d+(?:[A-Z]{1,3}(?![A-Z])|\s(?:UP|DN)\b)?)", re.I)
+
+
+def bridge_num(m):
+    return re.sub(r"\s+", "", m.group(1)).upper()
 BR_HEAD = re.compile(r"^\W*(?:EX(?:G|IST\w*)?\.?\s*|PROP\w*\.?\s*)?BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*\d+[A-Z]*\s*(?:UP|DN)?\W*$", re.I)
-LEVEL_LINE = re.compile(r"^\W*(?:EX(?:G|IST(?:ING)?)?\.?|PROP(?:OSED)?\.?)?\s*(?:FL|F\.L|HFL|H\.F\.L|BL|B\.L|SFL|RL|MIN|BED|DSL|LWL)\b", re.I)
-AT_CH = re.compile(r"\bAT\s*CH\.?\s*[:.]?\s*(\d[\d\s+.,]*)", re.I)
+LEVEL_LINE = re.compile(r"^\W*(?:EX(?:G|IST(?:ING)?)?\.?|PROP(?:OSED)?\.?)?\s*(?:FL|F\.L|HFL|H\.F\.L|BL|B\.L|SFL|RL|MIN|BED|DSL|LWL|O\.?HFL|C\.?HFL|"
+                        r"ROAD\s*LE?VE?L|HC|VC|EARTH\s*CUSHION)\b", re.I)
+# (a level block may go on with the road level and the clearances: "EXG.ROAD LEVEL = 238 / HC = 7.819 / VC = 7")
+# "AT CH: 945+828.373", and a callout's chainage line that starts "CH: 945+828.373 ROB PROPOSED BY IR." (level crossings)
+AT_CH = re.compile(r"(?:\bAT\s*CH\.?\s*[:.]?|\bCH\s*:)\s*(\d[\d\s+.,]*)", re.I)
 ONE_SPAN = r"\d+\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*M?"
 SPAN = re.compile(rf"\bSPAN\s*[:.]?\s*({ONE_SPAN}(?:\s*\+\s*{ONE_SPAN})*)", re.I)
 BARE_SPAN = re.compile(rf"({ONE_SPAN}(?:\s*\+\s*{ONE_SPAN})*)", re.I)      # "RCC SLAB - 1 X 1.83 + 1 X 3.66 + 1 X 1.83"
@@ -168,7 +176,7 @@ class SheetObjects:
             m = BR_RE.search(w.text)
             if not m:
                 continue
-            num = m.group(1).upper()
+            num = bridge_num(m)
             if BR_HEAD.match(w.text):                       # "BR NO. 15" heading a level block
                 parts = self.lines_from(w, lambda t: bool(LEVEL_LINE.match(t)), lambda t: False, 8)
                 if len(parts) > 1:
@@ -255,7 +263,11 @@ class SheetObjects:
                 by[key] = Bridge(num or None, st, kind, label)
             by[key].labels.append(parts)
         for (kind, num, st), b in by.items():
-            b.levels = levels.get((kind, num), []) if not num.startswith("@") else []
+            if not num.startswith("@"):
+                b.levels = levels.get((kind, num), [])
+            else:                                      # a block headed "EXG. BR. NO. LC" with no number: the sheet's one
+                lone = [k for k in by if k[0] == kind and k[1].startswith("@")]       # unnumbered item of that kind
+                b.levels = levels.get((kind, ""), []) if len(lone) == 1 else []
             self.crossings.append(b)
         self.crossings.sort(key=lambda b: numbers(AT_CH.search(joined(b.best()).text).group(1))[0])
 

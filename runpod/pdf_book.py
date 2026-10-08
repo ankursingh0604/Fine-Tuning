@@ -82,7 +82,7 @@ class Book:
         ql = q.lower()
         fs = self.finders
         everywhere = range(len(fs))
-        nums = [n.upper() for n in F.BRIDGE_REF.findall(q)]
+        nums = [re.sub(r"\s+", "", n).upper() for n in F.BRIDGE_REF.findall(q)]
         if nums:
             hit = [i for i in everywhere if any(fs[i].objects().find_bridges(num=n) for n in nums)]
             return hit, f"no bridge {', '.join(nums)} is printed {self.where}"

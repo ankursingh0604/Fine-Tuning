@@ -34,3 +34,6 @@ data/gad/
 gad_kit/gad_bundle.zip
 gad_kit/gad_run/
 gad_kit/rendered_samples.txt
+
+# GAD model results (trained weights and predictions that quote the drawings): kept in-house
+results/gad/

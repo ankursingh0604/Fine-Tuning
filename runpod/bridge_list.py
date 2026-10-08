@@ -21,9 +21,14 @@ import json
 import re
 
 FIELDS = ["br_no", "chainage", "exg_structure", "exg_configuration", "description", "exs_fl",
-          "prop_structure", "prop_type", "prop_configuration", "prop_fl", "prop_bed_level"]
+          "prop_structure", "prop_type", "prop_configuration", "prop_fl", "prop_bed_level",
+          "hc", "vc"]                    # horizontal / vertical clearance (m), printed for level crossings and road bridges
 
-AT_CH = re.compile(r"AT\s*CH\.?\s*[:.]?\s*(\d[\d+.,]*(?:\s*\+\s*[\d.]+)?)", re.I)     # also "LINEAT CH:" (no space)
+LINE_FL = re.compile(r"\bF\.?\s*L\.?\s+(UP|DN|DOWN|[1-9](?:ST|ND|RD|TH))\s*(?:LINE|/\s*L)\b\.?\s*[:=\-]\s*(-?\d+(?:\.\d+)?)", re.I)
+CLEARANCE = re.compile(r"\b(HC|VC)\s*[:=\-]\s*(\d+(?:\.\d+)?)", re.I)     # "HC = 7.819", "VC = 7"
+BED_LEVEL = re.compile(r"\bBED\s+LE?VE?L\.?\s*[:=\-]\s*(-?\d+(?:\.\d+)?)", re.I)
+# also "LINEAT CH:" (no space), and a level crossing's chainage line "CH: 945+828.373 ROB PROPOSED BY IR."
+AT_CH = re.compile(r"(?:AT\s*CH\.?\s*[:.]?|\bCH\s*:)\s*(\d[\d+.,]*(?:\s*\+\s*[\d.]+)?)", re.I)
 ONE = r"\d+\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)*"
 SPAN = re.compile(rf"{ONE}(?:\s*\+\s*{ONE})*")
 ITEM_ID = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?\s*(?:BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*)?"
@@ -62,7 +67,23 @@ def chainage_str(printed):
 def levels(text):
     """exs_fl, prop_fl, prop_bed_level from a level block: "EXG FL = 175.62 MIN FL REQ. = ... FL = 175.535 B.L = ..."
     or "EX. FL : 3.782 PROP. FL : 3.973 HFL : 2.645 BL : 0.301"."""
-    out = {"exs_fl": None, "prop_fl": None, "prop_bed_level": None}
+    out = {"exs_fl": None, "prop_fl": None, "prop_bed_level": None, "hc": None, "vc": None}
+    for k, v in CLEARANCE.findall(text or ""):
+        out[k.lower()] = out[k.lower()] or v
+    # FLs named by line ("FL UP LINE = 237.34", "FL 3RD LINE = 237.343"): an existing line (UP / DN) gives the existing FL,
+    # the highest-numbered line the proposed one (a lower numbered line, when there is no UP / DN, the existing one)
+    named = [(ln.upper(), v) for ln, v in LINE_FL.findall(text or "")]
+    ordinal = sorted(((int(re.match(r"\d", ln).group()), v) for ln, v in named if ln[0].isdigit()), key=lambda t: -t[0])
+    exist = [v for ln, v in named if not ln[0].isdigit()]
+    if ordinal:
+        out["prop_fl"] = ordinal[0][1]
+    if exist:
+        out["exs_fl"] = exist[0]
+    elif len(ordinal) > 1:
+        out["exs_fl"] = ordinal[1][1]
+    m = BED_LEVEL.search(text or "")
+    if m:
+        out["prop_bed_level"] = m.group(1)
     for k, v in LEVEL_KV.findall(text or ""):
         key = re.sub(r"[^A-Z]", "", k.upper())
         if key in ("EXFL", "EXGFL", "EXISTFL", "EXISTINGFL"):

@@ -34,7 +34,7 @@ GRADIENT = re.compile(r"^(?:(?:(?:rise|fall)\s*1\s*in\s*[\d.,]+|level|horizontal
 BAND_GRADIENT = re.compile(r"^[RF]\s+(?:1\s*in\s*)?[\d.,]+(?:\s*\([^)]*\))?$", re.I)
 FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
 # a bridge named in a question: "Br. No. 15", "BR NO. 575A", "EXG. BR. NO. 320UP", "bridge 560"
-BRIDGE_REF = re.compile(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+[a-z]{0,2})\b", re.I)
+BRIDGE_REF = re.compile(r"\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*(\d+(?:[a-z]{1,3}|\s(?:up|dn))?)\b", re.I)    # 239AUP, "214 UP"
 # a curve named in a question: "curve 8", "curve no. 8", "C-8", "C. NO. - 8", "C.NO.17U" (not "CH 11540", "TPCC2")
 CURVE_ID = re.compile(r"\b(?:curve\s*(?:no\.?)?|c\.?\s*no\.?|c)\s*[-.:]?\s*(\d+[a-z]*)\b", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
@@ -410,7 +410,7 @@ class Finder:
         if not bridge_q or not objs.bridges:
             return None
         import band_table
-        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
+        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
         if not nums:
             if re.search(r"\b(list|all|how many|which|what|show|every|count)\b", ql):
                 return self.list_bridges(q)
@@ -540,7 +540,7 @@ class Finder:
             return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
         cnum = CURVE_ID.search(q)
         places = []
-        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
+        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
         if nums:
             st = self.asked_status(ql)
             for b in (b for n in nums for b in objs.find_bridges(num=n, status=st)):
@@ -627,7 +627,7 @@ class Finder:
             if i == self.s.page_no:
                 continue
             for m in sheet_objects.BR_RE.finditer(page.get_text()):
-                n = m.group(1).upper()
+                n = sheet_objects.bridge_num(m)
                 if n == num or re.fullmatch(re.escape(num) + r"(UP|DN)", n):
                     pages.append(i + 1)
                     break
@@ -737,7 +737,7 @@ class Finder:
         chainage printed in the label it names ("cut/fill at C-8 TPCC2" -> "C-8. TPCC2 AT Ch. 11701.654m."). Labels
         tying for the best match each count ("BR NO. 15" -> the EX. and the PROP. bridge, at their own chainages)."""
         # a bridge named in the question: the chainage printed in its callout (all its lines joined)
-        nums = [n.upper() for n in BRIDGE_REF.findall(q)]
+        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
         if nums and self.objects().bridges:
             import sheet_objects
             out = []
