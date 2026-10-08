@@ -244,3 +244,14 @@ def problems(got, want, where=""):
 
 def dump(rs):
     return json.dumps([{k: r[k] for k in FIELDS} for r in rs], indent=2, ensure_ascii=False)
+
+
+def write_csv(rs, path):
+    """The same rows as a CSV for Excel: the same columns in the same order, an empty cell where the JSON has null.
+    Written with a byte order mark (utf-8-sig) so Excel opens it with the right characters."""
+    import csv
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(FIELDS)
+        for r in rs:
+            w.writerow(["" if r[k] is None else r[k] for k in FIELDS])

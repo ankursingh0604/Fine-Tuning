@@ -11,7 +11,9 @@ compared with the PDF text. The page (chat_ui/index.html) talks to this server:
 
     POST /api/upload            a PDF or image (multipart "file")  -> {doc, name, pages, note, suggestions}
     GET  /api/doc/{doc}/page/N  page N as a PNG for the viewer
-    POST /api/ask               {"doc": ..., "question": ...}      -> {answer, pages, crops: [{url, caption}], seconds}
+    POST /api/ask               {"doc": ..., "question": ...}      -> {job}   (answered in the background)
+    GET  /api/job/{job}         {status, seconds, crops read so far} ... then {result: {answer, pages, crops, seconds,
+                                file (the bridge list JSON)}} or {error}
     GET  /api/doc/{doc}/file    a crop the model read (?path=...)
 """
 import argparse
@@ -48,9 +50,42 @@ class Docs:
 
     def __init__(self, ask, log=print):
         self.ask, self.log = ask, log
-        self.docs = {}
+        self.docs, self.jobs = {}, {}
         self.root = Path(tempfile.mkdtemp(prefix="railway_chat_"))
         self.model_lock = threading.Lock()      # one model: one question at a time
+
+    # A question is answered in the background and the page asks for the result: a long one (the bridge list of a
+    # many-page PDF reads every callout) takes longer than a browser waits for one request - Firefox gives up after
+    # 300 s and shows "NetworkError" while the server is still reading.
+    def start(self, doc, question):
+        self.get(doc)                           # an unknown document is said at once
+        job = uuid.uuid4().hex[:12]
+        j = self.jobs[job] = {"status": "waiting", "started": time.time(), "doc": doc, "marks": None,
+                              "result": None, "error": None}
+
+        def run():
+            try:
+                j["result"] = self.answer(doc, question, j)
+                j["status"] = "done"
+            except Exception as e:              # said on the page, and the whole error in this terminal
+                import traceback
+                traceback.print_exc()
+                j["error"], j["status"] = str(e) or type(e).__name__, "error"
+        threading.Thread(target=run, daemon=True).start()
+        self.log(f"question: {question!r}")
+        return job
+
+    def poll(self, job):
+        j = self.jobs.get(job)
+        if j is None:
+            raise KeyError("That question is no longer known · ask it again")
+        out = {"status": j["status"], "seconds": round(time.time() - j["started"])}
+        if j["marks"] is not None and j["doc"] in self.docs:
+            out["crops"] = len(self.docs[j["doc"]].crops_since(j["marks"]))
+        if j["status"] in ("done", "error"):
+            out["result"], out["error"] = j["result"], j["error"]
+            self.jobs.pop(job, None)
+        return out
 
     def add(self, filename, data):
         import pdf_book
@@ -95,7 +130,7 @@ class Docs:
                 img.save(out)
         return out
 
-    def answer(self, doc, question):
+    def answer(self, doc, question, job=None):
         import pdf_book
         book = self.get(doc)
         q = question.strip()
@@ -104,6 +139,8 @@ class Docs:
         with self.model_lock:
             t = time.time()
             marks = book.crop_marks()
+            if job is not None:
+                job["status"], job["marks"] = "reading", marks
             book.last_export = None
             text = book.answer(q)
             export = book.last_export
@@ -117,7 +154,9 @@ class Docs:
         if export:                       # the bridge list: a JSON file to download, the answer says what is in it
             import bridge_list
             rel = export["path"].relative_to(book.out).as_posix()
+            rel_csv = export["csv"].relative_to(book.out).as_posix()
             out["file"] = {"name": export["path"].name, "url": f"/api/doc/{doc}/file?path={rel}&download=1",
+                           "csv_name": export["csv"].name, "csv_url": f"/api/doc/{doc}/file?path={rel_csv}&download=1",
                            "count": len(export["rows"]), "issues": export["issues"], "json": bridge_list.dump(export["rows"])}
             n = len(export["rows"])
             out["answer"] = (f"{n} item{'s' if n != 1 else ''} (bridges, level crossings, ROBs and RUBs) in chainage "
@@ -185,7 +224,14 @@ def create_app(docs):
     @app.post("/api/ask")
     async def ask(req: Ask):
         try:
-            return JSONResponse(await run_in_threadpool(docs.answer, req.doc, req.question))
+            return {"job": docs.start(req.doc, req.question)}
+        except KeyError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/job/{job}")
+    async def job(job: str):
+        try:
+            return JSONResponse(docs.poll(job))
         except KeyError as e:
             raise HTTPException(404, str(e))
 
@@ -211,7 +257,11 @@ def main():
     ap.add_argument("--port", type=int, default=7860)
     args = ap.parse_args()
     import uvicorn
+    from transformers.utils import logging as hf_logging
     from app import Model, model_ask
+    hf_logging.set_verbosity_error()             # not one "max_new_tokens ... max_length" warning per crop read
+    import warnings
+    warnings.filterwarnings("ignore", message=r".*max_new_tokens.*max_length.*")
     docs = Docs(model_ask(Model(args.adapter, args.four_bit)))
     print(f"open http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}")
     uvicorn.run(create_app(docs), host=args.host, port=args.port, log_level="warning")

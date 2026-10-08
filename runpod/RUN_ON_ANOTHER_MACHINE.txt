@@ -49,8 +49,9 @@ Chat page (Railsight: the drawing beside a conversation)
   object per bridge, level crossing, ROB and RUB, in chainage order, exactly these keys (bridge_list.py):
     br_no, chainage (km+m), exg_structure, exg_configuration, description, exs_fl,
     prop_structure, prop_type, prop_configuration, prop_fl, prop_bed_level      (null where the drawing prints nothing)
+  The same list also comes as a CSV for Excel (same columns, empty cells for null): "Excel CSV" beside "JSON".
   Every value is the model's reading of the item's callout and level block; values it read differently from the PDF
-  are listed in the answer (not in the file). read_sheet.py writes the same file next to its crops.
+  are listed in the answer (not in the files). read_sheet.py writes the same two files next to its crops.
   Files: chat_ui.py (the server, FastAPI - installed with gradio) and chat_ui/index.html (the page).
 
 Older web page (tabs)

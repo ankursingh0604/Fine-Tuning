@@ -233,12 +233,14 @@ def export_bridges(rows, path, q, owner):
     path.parent.mkdir(parents=True, exist_ok=True)
     text = bridge_list.dump(got)
     path.write_text(text, encoding="utf-8")
+    csv_path = path.with_suffix(".csv")                    # the same list for Excel
+    bridge_list.write_csv(got, csv_path)
     issues = [line for g, w, where in rows for line in bridge_list.problems(g, w, where)]
-    owner.last_export = {"path": path, "rows": got, "issues": issues}
+    owner.last_export = {"path": path, "csv": csv_path, "rows": got, "issues": issues}
     if not got:
-        return f"No bridges matching that are printed here, so the JSON list is empty ({path.name})"
+        return f"No bridges matching that are printed here, so the list is empty ({path.name}, {csv_path.name})"
     head = (f"{len(got)} item{'s' if len(got) != 1 else ''} (bridges, level crossings, ROBs and RUBs), in chainage order · "
-            f"saved as {path}")
+            f"saved as {path} and {csv_path.name} (for Excel)")
     tail = ("Every value was read by the model and matches the PDF text" if not issues else
             "CHECK · these readings differ from the PDF text:\n" + "\n".join("  " + i for i in issues))
     return f"{head}\n{text}\n{tail}"
