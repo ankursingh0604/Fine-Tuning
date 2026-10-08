@@ -40,6 +40,9 @@ VIEWS = [
      "road, the slope, and the proposed road level at the box."),
     (r"L\s*-\s*SECTION OF DRAIN", "drain_lsection",
      "the longitudinal section of the drain along the subway: invert levels and offsets of the drain."),
+    (r"GROUND PROFILE", "ground_profile",
+     "the profile of the ground along the drain or road outside the subway: ground levels and drain invert levels "
+     "at each chainage, and the slope of the drain."),
     (r"CROSS DRAIN", "cross_drain_section", "a section through the cross drain at the location marked X."),
     (r"TYPICAL DETAILS? OF|DETAILS OF .*WALL", "wall_detail",
      "a typical cross-section of the wall named in the title (face, toe, drop, curtain or return wall): its "
@@ -64,7 +67,7 @@ LEVELS = [
     # (label pattern, kind, meaning) - first match wins, so the specific ones come first
     (r"\bSCOUR\b", "scour_level", "the lowest level the stream bed is expected to scour down to in a flood"),
     (r"\bRAIL\b", "rail_level", "the level of the top of the rail"),
-    (r"FORMATION|\bF\.?L\.?\b(?!.*WALL)", "formation_level",
+    (r"FORMATION|(?<!H\.)(?<!H)\bF\.?L\.?\b(?!.*WALL)", "formation_level",     # (not the F.L of "H.F.L.")
      "the level of the top of the embankment (the formation) on which the ballast and track rest"),
     (r"TOP OF (THE )?(RCC )?(BOX|SLAB)|BOX TOP|TOP SLAB", "top_of_box_level", "the level of the top surface of the box's top slab"),
     (r"SOFFIT", "soffit_level", "the level of the underside of the top slab, i.e. the top of the clear opening"),
@@ -177,3 +180,44 @@ ABBREVIATION_HINTS = {
     "RUB": "road under bridge (a box carrying the railway over a road)",
     "ROW": "railway boundary (right of way)",
 }
+
+# ---------------------------------------------------------------- components (what each part of an RCC box is for)
+COMPONENTS = [
+    # (pattern in the drawing's text, name, what it is and why it is provided)
+    (r"TOP\s+SLAB|BOX\s+TOP|TOP\s+OF\s+(?:RCC\s+)?BOX", "top slab",
+     "the roof of the box. It carries the track, ballast and fill above it and the train loads, and spans between the side walls."),
+    (r"BOTTOM\s+SLAB|BASE\s+SLAB|RAFT", "bottom (base) slab",
+     "the floor of the box. It spreads the loads of the box onto the soil like a raft and forms the bed of the waterway or road."),
+    (r"HAUNCH", "haunch",
+     "the thickened corner where a slab meets a wall. It strengthens the joint where bending is highest."),
+    (r"WEARING\s+CO(?:AT|URSE)", "wearing coat",
+     "a layer of concrete laid over the slab to take the wear from flowing water, debris or traffic, so the structural slab is not worn away."),
+    (r"LEVEL+ING\s+CO(?:URSE|ARSE)|LVLLING\s+COURSE|LEAN\s+CONCRETE", "levelling course",
+     "a thin layer of plain (lean) concrete laid on the ground under the base slab and walls. It gives a clean, level surface to build on and keeps the reinforcement off the soil."),
+    (r"FACE\s+WALL", "face wall",
+     "the wall at each end of the box barrel, above the opening. It holds back the embankment where the box ends."),
+    (r"RETURN\s+WALL|R/\s?WALL", "return wall",
+     "the walls at the ends of the box turned back along the embankment. They retain the embankment fill at the sides of the opening and guide the flow or road into the box."),
+    (r"RETAINING\s+WALL", "retaining wall",
+     "a wall that holds back the earth of the embankment beside the opening (used at RUBs to keep the approach road clear)."),
+    (r"TOE\s+WALL", "toe wall",
+     "a small wall at the foot of the embankment slope or pitching. It stops the stone pitching and the slope from sliding."),
+    (r"DROP\s+WALL", "drop wall",
+     "a wall at the end of the floor protection, taken down below the bed. It stops scour at the ends from undermining the box and its flooring."),
+    (r"CURTAIN\s+WALL", "curtain wall",
+     "a cut-off wall at the upstream or downstream edge of the flooring, taken below the bed, to stop scour and water creeping under the box."),
+    (r"PITCHING", "stone pitching",
+     "stones laid on the slopes and the bed near the box. It protects the embankment and the bed from erosion by flowing water."),
+    (r"APRON|FLOORING", "apron (flooring)",
+     "the protected floor of the stream at the entry and exit of the box. It stops the bed from scouring next to the structure."),
+    (r"WEEP\s*HOLES?", "weep holes",
+     "pipes through the walls that let water in the backfill drain out, so water pressure does not build up behind the walls."),
+    (r"BACK\s*FILL|FILTER\s+MEDIA|GRANULAR\s+MATERIAL", "backfill / filter material",
+     "the free-draining granular fill placed behind the walls and around the box. It drains water to the weep holes and keeps fines from washing out."),
+    (r"SOLING", "soling",
+     "a layer of packed stones or boulders under the foundation. It replaces weak soil and improves the bearing below the box."),
+    (r"BALLAST", "ballast cushion",
+     "the crushed-stone layer under the sleepers. It spreads the track loads, drains water and holds the track in line."),
+    (r"\d+\s*MM\s+GAP|EXPANSION\s+JOINT|JOINT\s+FILLER", "gap / joint",
+     "the gap left between the new box and the existing structure (filled with joint filler), so the two structures can move and settle independently."),
+]

@@ -5,7 +5,7 @@
 Unzip anywhere on the 3060 machine:
     gad_bundle/gad_kit/   training kit + dataset/ (jsonl + images) + keep_ids.json
     gad_bundle/gad_tools/ the GAD reader (annotate_gad.py, gad_kinds.py, facts.py) used by ask_gad.py
-    gad_bundle/test_gad/  the held-out GAD PDF for your own test (never trained on)
+    gad_bundle/test_gad/  the five held-out GAD PDFs for your own test (never trained on)
 """
 import json
 import zipfile
@@ -29,7 +29,7 @@ def main():
     missing = [p for p in used if not (DS / p).exists()]
     if missing:
         raise SystemExit(f"{len(missing)} images missing (e.g. {missing[:3]}): rebuild the dataset")
-    test_id, test_pdf = (DS / "test_gad.txt").read_text(encoding="utf-8").split("\n")[:2]
+    tests = [l.split("\t") for l in (DS / "test_gad.txt").read_text(encoding="utf-8").splitlines() if "\t" in l]
     with zipfile.ZipFile(OUT, "w") as z:
         for p in KIT.iterdir():
             if p.suffix in (".py", ".sh", ".txt", ".json") and p.name != OUT.name:
@@ -41,8 +41,9 @@ def main():
         z.write(DS / "test_gad.txt", "gad_bundle/gad_kit/dataset/test_gad.txt")
         for p in sorted(used):
             z.write(DS / p, f"gad_bundle/gad_kit/dataset/{p}", zipfile.ZIP_STORED)
-        z.write(ROOT / "GAD" / test_pdf, f"gad_bundle/test_gad/{test_pdf}", zipfile.ZIP_DEFLATED)
-    print(f"wrote {OUT} ({OUT.stat().st_size / 1e6:.0f} MB): {len(used)} images; test GAD {test_id} ({test_pdf})")
+        for _, test_pdf in tests:
+            z.write(ROOT / "GAD" / test_pdf, f"gad_bundle/test_gad/{test_pdf}", zipfile.ZIP_DEFLATED)
+    print(f"wrote {OUT} ({OUT.stat().st_size / 1e6:.0f} MB): {len(used)} images; test GADs {', '.join(g for g, _ in tests)}")
 
 
 if __name__ == "__main__":

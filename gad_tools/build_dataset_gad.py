@@ -2,8 +2,9 @@
 
     .venv\\Scripts\\python gad_tools\\build_dataset_gad.py
 
-Splits (by whole GAD): one GAD is held back for your own test (TEST_GAD: never in train or validation; its questions
-go to test.jsonl, only to score the trained model), a few GADs are validation, the rest train.
+Splits (by whole GAD): five GADs are held back for the test (TEST_GADS: never in train or validation; their questions
+go to test.jsonl, only to score the trained model, and their PDFs go in the bundle for your own test), a few GADs are
+validation, the rest train.
 
 Tasks
   Question answering with the GAD facts as context (the way the CLI works on an uploaded vector PDF):
@@ -16,6 +17,9 @@ Tasks
     qa_note       notes, special/fill notes, specifications, design criteria, reference drawings
     qa_abbr       abbreviations (the drawing's own list first)
     qa_title      drawing numbers, revision, date, location, bridge, box size
+    qa_revision   the revision table: each revision's number, date and description
+    qa_band       road / drain L-section and ground profile value tables: what they hold, a value at a chainage/offset
+    qa_keyplan    key plan: stations on each side, tracks, curves, gradients, chainage marks, boundary, bore holes, flow
     qa_bore       bore log: SBC by depth, soil layers
     qa_view       which views there are and what each represents
     qa_finding    values that disagree between places on the drawing
@@ -49,8 +53,10 @@ ANN = ROOT / "data" / "gad" / "annotations"
 PDFS = ROOT / "GAD"
 OUT = ROOT / "data" / "gad" / "dataset"
 IMG = OUT / "images"
-TEST_GAD = "810-1"                       # held back completely: you upload this one yourself to test
-VAL_GADS = {"752-2", "787-1", "818-2", "RUB-801-1"}
+# held back completely, one of each kind: a plain single box, a twin box, a RUB (road L-section and ground profile),
+# a DYCE-format drawing (a slab bridge, notes in another layout) and a box on a curve
+TEST_GADS = ["810-1", "823-2", "RUB-801-1", "799-1", "752-3"]
+VAL_GADS = {"752-2", "787-1", "818-2", "RUB-789-1"}
 DPI = 150
 TILE = 768
 rng = random.Random(29)
@@ -81,6 +87,12 @@ def vary(q):
     if rng.random() < 0.1:
         q = q.rstrip("?")
     return q
+
+
+def bridge_desc(b):
+    """ " (1x3.660x6.530m RCC BOX)" - the title's description of the bridge, or its size when the title has no brackets."""
+    d = b.get("description") or (b.get("box") or b.get("slab") or {}).get("as_printed")
+    return f" ({d})" if d else ""
 
 
 def elem_phrase(el):
@@ -190,25 +202,25 @@ def qa_dims(a):
         v = f"{d['value']:g}"
         if d["kind"] == "track_centres":
             btw = (" between the " + " and the ".join(x.lower() for x in d["between"])) if d["between"] else ""
-            ans = f"The track-centre distance{btw} is {v} mm ('{d['label']}' on {d['view']}). T/C means track centres: {d['meaning']}."
+            ans = f"The track-centre distance{btw} is {v} mm ('{d['label']}' on {FX.view_name(d['view'])}). T/C means track centres: {d['meaning']}."
             qs = [f"What is the track centre distance{btw}?", "What is the T/C on this drawing?", f"What does {v} mean on the drawing?"]
         elif d["kind"] == "barrel_length":
-            ans = f"The barrel length is {v} mm ('{d['label']}' on {d['view']}): {d['meaning']}."
+            ans = f"The barrel length is {v} mm ('{d['label']}' on {FX.view_name(d['view'])}): {d['meaning']}."
             qs = ["What is the barrel length?", "How long is the box barrel?", f"What is {v}?"]
         elif d["kind"] == "thickness":
-            ans = f"{cap(d['meaning'])} is {v} mm ('{d['label']}' on {d['view']})."
+            ans = f"{cap(d['meaning'])} is {v} mm ('{d['label']}' on {FX.view_name(d['view'])})."
             what = (d["what"] or "item").lower()
             qs = [f"How thick is the {what}?", f"What is the thickness of the {what}?"]
         elif d["kind"] == "diameter":
-            ans = f"{cap(d['meaning'])} is {v} mm ('{d['label']}' on {d['view']})."
+            ans = f"{cap(d['meaning'])} is {v} mm ('{d['label']}' on {FX.view_name(d['view'])})."
             qs = [f"What is the diameter of the {(d['what'] or 'pipe').lower()}?", f"What does '{d['label']}' mean?"]
         else:
-            ans = f"'{d['label']}' on {d['view']}: {d['meaning']} ({v} mm)."
+            ans = f"'{d['label']}' on {FX.view_name(d['view'])}: {d['meaning']} ({v} mm)."
             qs = [f"What does '{d['label']}' mean?"]
         out.append(("qa_dim", vary(rng.choice(qs)), ans, ref))
     for s in a["slopes"][:4]:
-        out.append(("qa_dim", vary(rng.choice([f"What does '{s['label']}' mean on {s['view']}?", f"What is the slope '{s['label']}'?"])),
-                    f"'{s['label']}' on {s['view']} is {s['meaning']}.", [("slope", s["label"])]))
+        out.append(("qa_dim", vary(rng.choice([f"What does '{s['label']}' mean on {FX.view_name(s['view'])}?", f"What is the slope '{s['label']}'?"])),
+                    f"'{s['label']}' on {FX.view_name(s['view'])} is {s['meaning']}.", [("slope", s["label"])]))
     if not any(d["kind"] == "barrel_length" for d in a["labelled_dims"]):
         out.append(("qa_absent", vary("What is the barrel length?"),
                     "The drawing does not write a barrel length label, so I can't give it from the text of this GAD.", []))
@@ -363,15 +375,20 @@ def qa_title(a):
             out.append(("qa_title", vary(rng.choice(qs)), tmpl.format(v=tb[key]), [ref]))
     if b.get("bridge_no"):
         out.append(("qa_title", vary(rng.choice(["Which bridge is this GAD for?", "What is the bridge number?"])),
-                    f"It is {b.get('category', 'bridge').lower()} no. {b['bridge_no']} ({b.get('description', '')})"
+                    f"It is {b.get('category', 'bridge').lower()} no. {b['bridge_no']}{bridge_desc(b)}"
                     + (f" at CH {b['chainage']}" if b.get("chainage") else "") + (f", {b['relation_to_existing'].lower()}" if b.get("relation_to_existing") else "") + ".",
                     ["bridge", "title"]))
     if b.get("box"):
         bx = b["box"]
         out.append(("qa_title", vary(rng.choice(["What is the size of the box?", "What is the box size?", "How big is the opening?"])),
-                    f"The title gives the box as {bx['as_printed']} m: {bx['cells']} cell(s) of clear width {bx['clear_width_m']:g} m and clear "
+                    f"The title gives the box as {bx['as_printed'].rstrip('mM ')} m: {bx['cells']} cell(s) of clear width {bx['clear_width_m']:g} m and clear "
                     f"height {bx['clear_height_m']:g} m." + (" Note: the comparative table gives a different size - see the disagreements." if any("box size" in f for f in a["findings"]) else ""),
                     ["bridge", "title"] + [("table", "comparative_table", "SPAN")]))
+    elif b.get("slab"):
+        sl = b["slab"]
+        out.append(("qa_title", vary(rng.choice(["What is the size of the box?", "What is the span of the bridge?", "Is this an RCC box?"])),
+                    f"This GAD is not for a box: the title gives a slab bridge, {sl['as_printed']} - {sl['spans']} span(s) of clear span "
+                    f"{sl['clear_span_m']:g} m ({sl['type']}).", ["bridge", "title"]))
     return out
 
 
@@ -395,6 +412,95 @@ def qa_bore(a):
     return out
 
 
+def qa_revisions(a):
+    revs = a["title_block"].get("revisions") or []
+    if not revs:
+        return []
+    out = [("qa_revision", vary(rng.choice(["What is the revision history of this drawing?", "List the revisions of this GAD.",
+                                             "How many times has this drawing been revised?"])),
+            f"The revision table lists {len(revs)} entr{'y' if len(revs) == 1 else 'ies'}: "
+            + "; ".join(f"{r['rev_no']} dated {r['date'] or '(no date written)'}, {(r['description'] or '(no description)').lower()}" for r in revs)
+            + f". The latest is {revs[-1]['rev_no']}.", ["revisions"])]
+    r = rng.choice(revs)
+    out.append(("qa_revision", vary(rng.choice([f"What was revision {r['rev_no']} about?", f"When was {r['rev_no']} issued?"])),
+                f"{r['rev_no']} is dated {r['date'] or '(no date written)'}: {(r['description'] or 'no description is written').lower()}.", ["revisions"]))
+    return out
+
+
+def qa_keyplan(a):
+    out = []
+    for v in a["views"]:
+        kp = v.get("key_plan")
+        if not kp:
+            continue
+        side = {s: [x["text"] for x in kp.get("stations", []) if x["side"] == s] for s in ("left", "right")}
+        if side["left"] or side["right"]:
+            ans = "From the key plan: " + "; ".join(f"towards the {s} end of the line: {', '.join(t)}" for s, t in side.items() if t) + "."
+            out.append(("qa_keyplan", vary(rng.choice(["Which stations are on either side of the bridge?", "Between which stations is this bridge?",
+                                                        "Where does the line go on each side of the bridge?"])),
+                        ans, [("kp", "stations", s) for s, t in side.items() if t]))
+        if kp.get("tracks"):
+            out.append(("qa_keyplan", vary(rng.choice(["Which tracks are shown on the key plan?", "Which lines does the key plan show?"])),
+                        "The key plan labels these tracks: " + "; ".join(dict.fromkeys(kp["tracks"])) + ".", [("kp", "tracks")]))
+        if kp.get("curves"):
+            out.append(("qa_keyplan", vary(rng.choice(["Is there any curve near the bridge?", "What curves are shown on the key plan?"])),
+                        "The key plan writes these curve marks (radius labels): " + ", ".join(dict.fromkeys(kp["curves"]))
+                        + ". It is a location sketch, so check the alignment drawing for the full curve data.", [("kp", "curves")]))
+        else:
+            out.append(("qa_keyplan", vary("Is there any curve near the bridge?"),
+                        "The key plan does not mark any curve radius near the bridge.", [("kp", "tracks")]))
+        if kp.get("gradients"):
+            out.append(("qa_keyplan", vary(rng.choice(["What gradient is the track on at the bridge?", "Which gradients does the key plan show?"])),
+                        "The key plan shows the gradients " + "; ".join(dict.fromkeys(kp["gradients"])) + ".", [("kp", "gradients")]))
+        if kp.get("markers"):
+            out.append(("qa_keyplan", vary(rng.choice(["Which chainages or KMs are marked on the key plan?", "What reference marks are on the key plan?"])),
+                        "The key plan marks: " + "; ".join(m["text"] for m in kp["markers"]) + ".", [("kp", "markers")]))
+        if kp.get("boundary"):
+            out.append(("qa_keyplan", vary(rng.choice(["Does the key plan show the railway boundary?", "Is any land to be acquired?"])),
+                        "The key plan shows: " + "; ".join(dict.fromkeys(kp["boundary"])) + "."
+                        + (" So some land is marked to be acquired." if any("ACQUI" in b for b in kp["boundary"]) else ""), [("kp", "boundary")]))
+        if kp.get("bridges"):
+            out.append(("qa_keyplan", vary(rng.choice(["What does the key plan say about the bridge?", "How is the bridge described on the key plan?"])),
+                        "The key plan's callout reads: " + " / ".join(kp["bridges"]) + ".", [("kp", "bridges")]))
+        if kp.get("bore_holes") or kp.get("flow"):
+            ans = []
+            if kp.get("bore_holes"):
+                ans.append(f"{kp['bore_holes']} bore hole location(s) (BH)")
+            if kp.get("flow"):
+                ans.append("the direction of flow (FLOW arrow)")
+            out.append(("qa_keyplan", vary("Does the key plan show the bore holes or the flow direction?"),
+                        "Yes, the key plan marks " + " and ".join(ans) + ".", [("kp", "extra")]))
+    return out
+
+
+def qa_bands(a):
+    """The value tables under road / drain L-sections and ground profiles: what they hold, and values at a given column."""
+    out = []
+    for v in a["views"]:
+        bd = v.get("band")
+        if not bd or not bd["columns"]:
+            continue
+        labels = [r["label"] for r in bd["rows"]]
+        refs = [("band", v["title"], k) for k in range((len(bd["columns"]) + 11) // 12)]
+        name = v["title"].lower().replace("l- section", "L-section").replace("l-section", "L-section")
+        desc = "; ".join(f"{r['label']}: {len(r['values'])} values, from {r['values'][0]} (left) to {r['values'][-1]} (right)" for r in bd["rows"])
+        out.append(("qa_band", vary(rng.choice([f"What does the table under the {name} show?", f"Explain the value table of the {name}.",
+                                                 f"What values are given on the {name}?"])),
+                    f"Under the {v['title']} there is a value table with {len(labels)} row(s) and {len(bd['columns'])} columns: {desc}.",
+                    refs))
+        key = next((l for l in labels if re.search(r"CHAINAGE|OFFSET|DISTANCE", l, re.I)), None)
+        others = [l for l in labels if l != key]
+        if not key or not others:
+            continue
+        cols = [(k, c) for k, c in enumerate(bd["columns"]) if key in c and any(o in c for o in others)]
+        for k, c in rng.sample(cols, min(3, len(cols))):
+            o = rng.choice([o for o in others if o in c])
+            out.append(("qa_band", vary(f"On the {name}, what is the {o.lower()} at {key.lower()} {c[key]}?"),
+                        f"In the value table under the {v['title']}, the column with {key} {c[key]} gives {o} {c[o]}.",
+                        [("band", v["title"], k // 12)]))
+    return out
+
+
 def view_levels_text(a, title):
     ls = [l for l in a["levels"] if l["view"] == title]
     seen, parts = set(), []
@@ -411,10 +517,10 @@ def qa_views(a):
     out = []
     vs = a["views"]
     out.append(("qa_view", vary(rng.choice(["Which views are on this GAD?", "What diagrams does this drawing contain?", "List the views on the drawing."])),
-                "The drawing has these views: " + "; ".join(f"{v['title']} (scale {v['scale']})" for v in vs) + ".", ["views"]))
+                "The drawing has these views: " + "; ".join(f"{v['title']} (scale {v['scale'] or 'not written'})" for v in vs) + ".", ["views"]))
     for v in vs:
         parts, ds = view_levels_text(a, v["title"])
-        ans = f"The {v['title']} (scale {v['scale']}) is {v['represents']}"
+        ans = f"The {v['title']} (scale {v['scale'] or 'not written'}) is {v['represents']}"
         if parts:
             ans += " On this drawing it shows the levels " + ", ".join(parts[:10]) + ("" if len(parts) <= 10 else ", and more") + "."
         if ds:
@@ -466,7 +572,7 @@ def qa_summary(a):
     b, tb = a["bridge"], a["title_block"]
     parts = []
     if b.get("bridge_no"):
-        parts.append(f"GAD of {b.get('category', 'bridge').lower()} no. {b['bridge_no']} ({b.get('description', '')})"
+        parts.append(f"GAD of {b.get('category', 'bridge').lower()} no. {b['bridge_no']}{bridge_desc(b)}"
                      + (f" at CH {b['chainage']}" if b.get("chainage") else "") + (f", {b['relation_to_existing'].lower()}" if b.get("relation_to_existing") else ""))
     if tb.get("project"):
         parts.append(f"project: {tb['project']}" + (f", {tb['division']} division" if tb.get("division") else "") + (f", {tb['section']} section" if tb.get("section") else ""))
@@ -499,6 +605,168 @@ def qa_summary(a):
         refs += [("finding", f[:30]) for f in a["findings"]]
     return [("qa_summary", vary(rng.choice(["Summarize this GAD.", "Give me a summary of this drawing.", "What is this drawing about?"])),
              cap("; ".join(parts)) + ".", refs)]
+
+
+# ======================================================================== reasoning: worked checks with the formulas
+def num(s):
+    m = re.search(r"-?\d+(?:\.\d+)?", s or "")
+    return float(m.group(0)) if m else None
+
+
+def trow(a, table, kind):
+    return next((r for r in (a["tables"].get(table) or {}).get("rows", []) if r.get("kind") == kind), None)
+
+
+def tref(table, r):
+    return ("table", table, r["description"])
+
+
+def qa_reason(a):
+    """Values the drawing gives, checked with the formula behind them (vertical clearance, free board, height of water,
+    scour level, depth of track structure, the concrete grade rule and the founding pressure in the notes)."""
+    out = []
+    C, TD = "comparative_table", "track_details"
+    hfls = []
+    for kind, name in (("observed_hfl", "OHFL"), ("calculated_hfl", "CHFL"), ("hfl", "HFL")):
+        r = trow(a, C, kind)
+        if r and num(r.get("proposed")):
+            hfls.append((name, num(r["proposed"]), tref(C, r)))
+
+    def check(q, what, base_name, base, base_ref, row, why):
+        tv = num(row.get("proposed")) if row else None
+        if base is None or base_ref is None or tv is None or not hfls:
+            return
+        h = next((h for h in hfls if abs(base - h[1] - tv) < 0.006), None)
+        if h:
+            ans = (f"{cap(what)} = {base_name} - design HFL = {base:.3f} - {h[1]:.3f} ({h[0]}) = {base - h[1]:.3f} m. The comparative "
+                   f"table gives {row['proposed']}, so it agrees, and it shows the design HFL used is the {h[0]}. {why}")
+            refs = [base_ref, h[2], tref(C, row)]
+        else:
+            n0, v0, _ = hfls[0]
+            ans = (f"{cap(what)} = {base_name} - design HFL. With the {n0} {v0:.3f} m: {base:.3f} - {v0:.3f} = {base - v0:.3f} m. "
+                   f"The comparative table gives {row['proposed']}, which none of the HFLs printed on the drawing gives "
+                   f"(it would need an HFL of {base - tv:.3f} m) - worth checking which HFL the table used. {why}")
+            refs = [base_ref, tref(C, row)] + [x[2] for x in hfls]
+        out.append(("qa_reason", vary(q), ans, refs))
+
+    sof, sofs = first_level(a, "soffit_level")
+    td_fl = trow(a, TD, "formation_level")
+    fl = num(td_fl.get("proposed")) if td_fl else None
+    check(rng.choice(["How is the vertical clearance worked out? Check it.", "Is the vertical clearance in the table right?",
+                      "Explain the vertical clearance of the box."]),
+          "the vertical clearance", "soffit level", sof, ("level", sofs[0]["label"], sofs[0]["value"]) if sofs else None,
+          trow(a, C, "vertical_clearance"),
+          "It is the free height between the flood level and the underside of the top slab, so that the flood and floating debris pass under the box.")
+    check(rng.choice(["How is the free board worked out? Check it.", "Explain the free board on this GAD.", "Is the free board correct?"]),
+          "the free board", "formation level", fl, tref(TD, td_fl) if td_fl else None, trow(a, C, "free_board"),
+          "It is the height of the formation (top of the embankment) above the flood level, which keeps the track bed dry in a flood.")
+    bed_r = trow(a, C, "bed_level")
+    bed = num(bed_r.get("proposed")) if bed_r else None
+    how_r = trow(a, C, "height_of_water")
+    if bed is not None and how_r and num(how_r.get("proposed")) is not None and hfls:
+        tv = num(how_r["proposed"])
+        h = next((h for h in hfls if abs(h[1] - bed - tv) < 0.006), None)
+        if h:
+            ans = (f"Height (depth) of water = design HFL - bed level = {h[1]:.3f} ({h[0]}) - {bed:.3f} = {h[1] - bed:.3f} m, which matches "
+                   f"the table's {how_r['proposed']}. It is the depth of the flood water over the bed at the box.")
+        else:
+            ans = (f"Height of water = design HFL - bed level. With the {hfls[0][0]} {hfls[0][1]:.3f} and the bed level {bed:.3f}: "
+                   f"{hfls[0][1] - bed:.3f} m, but the table gives {how_r['proposed']} - it does not follow from the printed HFLs and "
+                   "bed level; worth checking.")
+        out.append(("qa_reason", vary(rng.choice(["How is the height of water worked out?", "Check the height of water in the table."])),
+                    ans, [tref(C, bed_r), tref(C, how_r)] + [x[2] for x in hfls]))
+    sd_r, sl_r = trow(a, C, "max_scour_depth"), trow(a, C, "max_scour_level")
+    if sd_r and sl_r and num(sd_r.get("proposed")) is not None and num(sl_r.get("proposed")) is not None and hfls:
+        sd, sl = num(sd_r["proposed"]), num(sl_r["proposed"])
+        h = next((h for h in hfls if abs(h[1] - sd - sl) < 0.006), None)
+        if h:
+            ans = (f"Maximum scour level = design HFL - maximum scour depth = {h[1]:.3f} ({h[0]}) - {sd:.3f} = {h[1] - sd:.3f} m, as the "
+                   f"table gives ({sl_r['proposed']}). The scour depth is measured down from the flood level, and the foundation and the "
+                   "drop/curtain walls must go below this level so the flood cannot undermine them.")
+        else:
+            ans = (f"Maximum scour level should be the design HFL minus the maximum scour depth ({sd:.3f} m), but none of the printed "
+                   f"HFLs gives the table's {sl_r['proposed']} that way - worth checking.")
+        out.append(("qa_reason", vary(rng.choice(["How is the maximum scour level worked out?", "Check the scour level."])),
+                    ans, [tref(C, sd_r), tref(C, sl_r)] + [x[2] for x in hfls]))
+    # depth of track structure = rail level - formation level = the items of the depth table
+    td_rl = trow(a, TD, "rail_level")
+    dts = a["tables"].get("depth_of_track_structure") or []
+    items = [(x["item"], num(x["value"])) for x in dts if x["item"].upper() != "TOTAL" and num(x["value"]) is not None]
+    tot = next((num(x["value"]) for x in dts if x["item"].upper() == "TOTAL"), None)
+    if td_rl and td_fl and num(td_rl.get("proposed")) is not None and fl is not None and items:
+        rl = num(td_rl["proposed"])
+        s_items = sum(v for _, v in items)
+        d = round((rl - fl) * 1000)
+        ans = (f"Rail level - formation level = {rl:.3f} - {fl:.3f} = {rl - fl:.3f} m = {d} mm. The depth of track structure adds up to "
+               + " + ".join(f"{v:g} ({k.lower()})" for k, v in items) + f" = {s_items:g} mm"
+               + (f" (printed total {tot:g} mm)" if tot else "") + ". ")
+        ans += ("They agree: the formation is one track-structure depth below the rail." if abs(d - s_items) <= 2 else
+                f"They do NOT agree ({d} mm vs {s_items:g} mm): the rail or formation level in the track details should be checked.")
+        out.append(("qa_reason", vary(rng.choice(["Do the rail level and formation level agree with the depth of track structure?",
+                                                   "Check the rail and formation levels against the track structure."])),
+                    ans, [tref(TD, td_rl), tref(TD, td_fl), ("table", "depth")]))
+    # notes: concrete grade by box size
+    notes = a["notes"].get("notes", []) + a["notes"].get("special_note", [])
+    gnote = next((it for it in notes if re.search(r"M\s*-?\s*35.*SPAN\s+OR\s+HEIGHT", it["text"], re.I)), None)
+    spec = next((s for s in a["notes"].get("specifications", []) if re.search(r"GRADE\s+OF\s+RCC\s+BOX", s["item"], re.I) and s.get("value")), None)
+    bx = a["bridge"].get("box")
+    if gnote and spec and bx:
+        mx = max(bx["clear_width_m"], bx["clear_height_m"])
+        need = "M35" if mx > 4 else "M30"
+        got = re.sub(r"[\s-]", "", spec["value"].upper())
+        ok = got.startswith(need)
+        ans = (f"Note {gnote['no']} says M35 concrete is used when the span or height of the box is more than 4 m, M30 otherwise. The box is "
+               f"{bx['clear_width_m']:g} m wide and {bx['clear_height_m']:g} m high, so the larger is {mx:g} m, "
+               f"{'more' if mx > 4 else 'not more'} than 4 m: {need} is needed. The specifications give {spec['value']} for the RCC box - "
+               + ("consistent with the note." if ok else "NOT what the note asks for; worth checking."))
+        out.append(("qa_reason", vary(rng.choice(["Is the concrete grade of the box correct as per the notes?",
+                                                   "Which concrete grade should the box have and why?"])),
+                    ans, ["bridge", ("notes", gnote["no"], gnote["text"][:30]), ("spec", spec["item"])]))
+    # notes: founding pressure against the SBC at the founding level
+    pnote = next((it for it in notes if re.search(r"FOUNDING\s+PRESSURE\s+OF\s+(?:THE\s+)?RCC\s+BOX\s*=\s*\d", it["text"], re.I)), None)
+    fdn, fdns = first_level(a, "founding_level")
+    bl = next((b for b in a["bore_logs"] if any(s.get("depth_m") is not None for s in b["sbc"])), None)
+    if pnote and fdn is not None and bed is not None and bl:
+        p = float(re.search(r"=\s*(\d+(?:\.\d+)?)", pnote["text"]).group(1))
+        depth = bed - fdn
+        rows = sorted([s for s in bl["sbc"] if s.get("depth_m") is not None], key=lambda s: s["depth_m"])
+        at = next((s for s in rows if s["depth_m"] >= depth - 0.05), rows[-1])
+        ok = at["sbc_t_per_m2"] >= p
+        ans = (f"Note {pnote['no']} gives the founding pressure of the box as {p:g} t/m². The founding level is {fdn:.3f} m, about "
+               f"{depth:.2f} m below the bed level {bed:.3f} m. Taking the bore log depths as measured from the bed (an approximation: "
+               f"the bore log is measured from the ground at the bore hole), the SBC at about {at['depth_m']:g} m is "
+               f"{at['sbc_t_per_m2']:g} t/m², which is "
+               + (f"more than {p:g} t/m²: the soil can carry the box, as the notes require." if ok else
+                  f"less than {p:g} t/m²: the notes require the SBC at the founding level to exceed the founding pressure, so this "
+                  "needs checking (or the ground improvement the notes describe)."))
+        out.append(("qa_reason", vary(rng.choice(["Is the soil strong enough for the box?", "Check the founding pressure against the SBC.",
+                                                   "Does the SBC satisfy the founding pressure in the notes?"])),
+                    ans, [("notes", pnote["no"], pnote["text"][:30]), ("level", fdns[0]["label"], fdns[0]["value"]), tref(C, bed_r),
+                          ("bore", bl["view"])]))
+    return out
+
+
+def qa_components(a):
+    """What each part of the box shown on the drawing is, why it is there, and where the drawing shows it."""
+    out = []
+    comps = FX.components(a)
+    if not comps:
+        return out
+    out.append(("qa_component", vary(rng.choice(["What are the components of this box and what does each do?",
+                                                  "Explain all the parts of the structure on this GAD.", "List the components shown on the drawing."])),
+                "The drawing shows these parts: " + " ".join(f"{cap(n)}: {w}" for n, w, _, _ in comps), [("comp", n) for n, _, _, _ in comps]))
+    for name, what, views, in_notes in rng.sample(comps, min(6, len(comps))):
+        pat = next(p for p, n, _ in K.COMPONENTS if n == name)
+        lvls = [l for l in a["levels"] if re.search(pat, l["label"], re.I)][:3]
+        dims = [d for d in a["labelled_dims"] if re.search(pat, d["label"], re.I)][:3]
+        ans = f"The {name} is {what} "
+        ans += (f"On this drawing it is shown on {', '.join(views[:4])}." if views else "On this drawing it is mentioned in the notes.")
+        if lvls or dims:
+            ans += " Its values: " + "; ".join([f"{l['label']} {lv(l['value'])} m" for l in lvls] + [f"{d['label']}" for d in dims]) + "."
+        out.append(("qa_component", vary(rng.choice([f"What is the {name} and why is it provided?", f"Explain the {name} on this GAD.",
+                                                      f"What does the {name} do?"])),
+                    ans, [("comp", name)] + [("level", l["label"], l["value"]) for l in lvls] + [("dim", d["label"], d["value"]) for d in dims]))
+    return out
 
 
 ABSENT = [("What is the pier height?", "This GAD is for an RCC box; it has no piers, so there is no pier height."),
@@ -574,7 +842,7 @@ def img_rows(a):
         path = save(im, f"{gid}_v{vi}")
         q = rng.choice(["Which view of the GAD is this and what does it represent?", "What does this diagram show?",
                         "What is this part of the drawing?"])
-        ans = f"This is the {v['title']} (scale {v['scale']}). It is {v['represents']}"
+        ans = f"This is the {v['title']} (scale {v['scale'] or 'not written'}). It is {v['represents']}"
         rows.append(("img_view", path, q, ans, []))
         parts, ds = view_levels_text(a, v["title"])
         if parts or ds:
@@ -656,16 +924,19 @@ def make_row(gid, split, task, n, question, answer, a, refs, image=None):
 
 def main():
     anns = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(ANN.glob("*.json"))]
-    assert any(a["gad_id"] == TEST_GAD for a in anns), f"{TEST_GAD} not annotated"
+    missing = set(TEST_GADS) - {a["gad_id"] for a in anns}
+    assert not missing, f"{missing} not annotated"
     out = {"train": [], "val": [], "test": []}
     stats = Counter()
     for a in anns:
         gid = a["gad_id"]
         # the test GAD is never trained or validated on; its questions are only used to score the trained model
-        split = "test" if gid == TEST_GAD else "val" if gid in VAL_GADS else "train"
+        split = "test" if gid in TEST_GADS else "val" if gid in VAL_GADS else "train"
         facts = FX.all_facts(a)
         qa = (qa_levels(a) + qa_values(a, facts) + qa_dims(a) + qa_plain(a) + qa_tables(a) + qa_notes(a) + qa_abbr(a) + qa_title(a)
-              + qa_bore(a) + qa_views(a) + qa_findings(a) + qa_computed(a) + qa_summary(a) + qa_absent(a))
+              + qa_revisions(a) + qa_keyplan(a) + qa_bands(a) + qa_bore(a) + qa_views(a) + qa_findings(a) + qa_computed(a) + qa_reason(a) + qa_components(a) + qa_summary(a) + qa_absent(a))
+        seen_qa = set()                                  # the same question with the same answer once per GAD
+        qa = [x for x in qa if (x[1].lower().rstrip("?"), x[2]) not in seen_qa and not seen_qa.add((x[1].lower().rstrip("?"), x[2]))]
         for n, (task, q, ans, refs) in enumerate(qa):
             out[split].append(make_row(gid, split, task, n, q, ans, a, refs))
             stats[task] += 1
@@ -679,7 +950,9 @@ def main():
         with open(OUT / f"{split}.jsonl", "w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    (OUT / "test_gad.txt").write_text(f"{TEST_GAD}\n{next(a['source_pdf'] for a in anns if a['gad_id'] == TEST_GAD)}\n", encoding="utf-8")
+    # one line per held-out GAD: id <tab> PDF name
+    (OUT / "test_gad.txt").write_text("".join(f"{g}\t{next(a['source_pdf'] for a in anns if a['gad_id'] == g)}\n" for g in TEST_GADS),
+                                      encoding="utf-8")
     print({k: len(v) for k, v in out.items()}, dict(stats))
 
 

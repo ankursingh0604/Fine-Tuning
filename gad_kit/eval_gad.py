@@ -89,6 +89,20 @@ def score(row, pred):
         says = re.search(r"\b(not|no|does not|doesn't|isn't|there is no|I don't)\b", pred, re.I)
         ok = bool(says) and not new
         return ok, "" if ok else ("invented " + ",".join(sorted(new)) if new else "did not say it is absent"), float(ok)
+    if task == "qa_component":
+        name = re.search(r"^The (.+?) is ", ref)
+        ok = bool(name) and name.group(1).split(" (")[0].lower() in pred.lower()
+        if not ok and not name:                                # the "all components" answer: most parts named
+            parts = re.findall(r"(?:^|\. |: )([A-Z][a-z /()]+?): ", ref)
+            got = sum(1 for p in parts if p.lower() in pred.lower())
+            ok = got >= 0.8 * max(1, len(parts))
+            return ok, "" if ok else f"named {got}/{len(parts)} parts", got / max(1, len(parts))
+        return ok, "" if ok else "component not named", float(ok)
+    if task == "qa_reason":                                    # the same verdict as the reference, and its numbers
+        def verdict(t):
+            return "flag" if re.search(r"\bNOT\b|worth checking|needs checking|less than \d", t) else "agree"
+        if verdict(ref) != verdict(pred):
+            return False, f"verdict {verdict(pred)} (reference: {verdict(ref)})", 0.0
     want = {x for x in NUM.findall(ref) if len(x.replace(".", "")) >= 2 or "." in x}
     q = DG.text_of(row["messages"][0]["content"])
     want -= {x for x in NUM.findall(q.split("Question:")[-1])}          # numbers the question itself contains
@@ -102,7 +116,7 @@ def evaluate(model, processor, ds, out, split="test", per_task=0, log=print):
     rows = DG.load_rows(ds, split, limit_per_task=per_task or None, seed=5)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    res, by = [], defaultdict(list)
+    res, by, by_gad = [], defaultdict(list), defaultdict(list)
     t0 = time.time()
     with open(out / f"{split}_predictions.jsonl", "w", encoding="utf-8") as fp:
         for i, row in enumerate(rows):
@@ -110,6 +124,7 @@ def evaluate(model, processor, ds, out, split="test", per_task=0, log=print):
             pred = generate(model, processor, msgs[:-1], imgs)
             ok, why, part = score(row, pred)
             by[row["task"]].append(ok)
+            by_gad[row.get("gad", "?")].append(ok)
             res.append({"id": row["id"], "task": row["task"], "pass": ok, "why": why, "partial": round(part, 3)})
             fp.write(json.dumps({"id": row["id"], "task": row["task"], "pass": ok, "why": why,
                                  "question": DG.text_of(row["messages"][0]["content"]).split("Question:")[-1].strip()[:300],
@@ -123,6 +138,7 @@ def evaluate(model, processor, ds, out, split="test", per_task=0, log=print):
         w.writerows(res)
     lines = [f"{split}: {sum(r['pass'] for r in res)}/{len(res)} passed ({100 * sum(r['pass'] for r in res) / max(1, len(res)):.1f} %)"]
     lines += [f"  {t:<16} {sum(v)}/{len(v)}" for t, v in sorted(by.items())]
+    lines += ["by GAD:"] + [f"  {g:<16} {sum(v)}/{len(v)} ({100 * sum(v) / max(1, len(v)):.0f} %)" for g, v in sorted(by_gad.items())]
     (out / f"{split}_summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     for l in lines:
         log(l)

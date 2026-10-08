@@ -23,7 +23,7 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +38,7 @@ GAD_DIR = ROOT / "GAD"
 OUT = ROOT / "data" / "gad" / "annotations"
 CELL = 6.0                                     # occupancy grid cell (pt) for finding view regions
 
-SCALE_RE = re.compile(r"^\(?\s*SCALE\s*[:\-]?\s*1\s*:\s*(\d+)\s*\)?\.?$", re.I)
+SCALE_RE = re.compile(r"^\(?\s*SCALE\s*[:\-]?\s*(?:1\s*:\s*(\d+)|(N\.?\s*T\.?\s*S\.?|NOT\s+TO\s+SCALE))\s*\)?\.?$", re.I)
 TITLE_WITH_SCALE = re.compile(r"^(?P<t>.+?)\s*\(\s*SCALE\s*1\s*:\s*(?P<s>\d+)\s*\)$", re.I)
 HEADINGS = {
     "notes": r"^NOTES?\s*:?$",
@@ -54,7 +54,8 @@ HEADINGS = {
     "track_details": r"^TRACK\s+DETAILS?\s*:?$",
     "depth_of_track_structure": r"^DEPTH\s+OF\s+TRACK\s+STRUCTURE\s*:?$",
 }
-STOPS = r"^(SEISMIC\s+ZONE\s*:|STANDARD\s+OF\s+LOADING\s*:|CENTRAL\s+RAILWAY\b|SIGNATURE\s+BLOCK\b|DIVISION\b|RAILWAY\s+OFFICIALS\b)"
+# (the railway's name alone starts the title block; "CENTRAL RAILWAY LETTER NO. ..." inside a note does not)
+STOPS = r"^(SEISMIC\s+ZONE\s*:|STANDARD\s+OF\s+LOADING\s*:|(WEST\s+)?CENTRAL\s+RAILWAY\s*$|SIGNATURE\s+BLOCK\b|DIVISION\b|RAILWAY\s+OFFICIALS\b)"
 LEVEL_WORD = re.compile(r"\b(LVL|LEVEL|HFL|H\.F\.L|OHFL|CHFL|SOFFIT|RL|R\.L|FDN|FND|FOUND|FOUNDING|INVERT|FORMATION|BED)\b", re.I)
 LEVEL_NUM = re.compile(r"(?<![\d.])(\d{2,4}\.\d{2,3})(?![\d.])")
 DIM_NUM = re.compile(r"^\d{2,5}(?:\.\d{1,3})?$")
@@ -161,39 +162,76 @@ def heading_regions(lines, heads, page_w, page_h=1e9):
     for h in sorted(heads, key=lambda h: order.get(h["kind"], 2)):
         hb = h["line"]["bbox"]
         # the section ends at the next heading (or stop line) below it in the same column ...
+        # (an ADD NOTE box set into the column, indented and in smaller type, does not end it: 799-1 lost notes 6-27)
         below = [g["line"]["bbox"][1] for g in heads if g is not h and g["line"]["bbox"][1] > hb[3] - 1
-                 and hb[0] - 70 <= g["line"]["bbox"][0] <= hb[0] + 120]
-        below += [s["bbox"][1] for s in stops if s["bbox"][1] > hb[3] and hb[0] - 70 <= s["bbox"][0] <= hb[0] + 400]
+                 and hb[0] - 70 <= g["line"]["bbox"][0] <= hb[0] + 120
+                 and not (g["kind"] == "add_note" and h["kind"] != "add_note" and g["line"]["bbox"][0] > hb[0] + 25)]
+        # (a table ends at its last numbered row anyway: only a stop line in its own column ends it - the signature
+        # block's "RAILWAY OFFICIALS" beside 752-3's table cut it at row 7)
+        reach = 120 if h["kind"] in ("comparative_table", "track_details") else 400
+        below += [s["bbox"][1] for s in stops if s["bbox"][1] > hb[3] and hb[0] - 70 <= s["bbox"][0] <= hb[0] + reach]
         bottom = min(below + [page_h - 5])
         # ... and its right edge is the next heading to the right beside it (not one further down the same column)
         right = min([g["line"]["bbox"][0] for g in heads if g["line"]["bbox"][0] > hb[0] + 60 and hb[1] - 5 <= g["line"]["bbox"][1] < bottom]
                     + [page_w])
         if h["kind"] == "depth_of_track_structure":            # a small box; the signature boxes sit right of it
             right = min(right, hb[0] + 230)
+            # ... and only a few "RAIL HEIGHT = 172MM ... TOTAL = 762MM" lines tall: it ends at its last such line (with
+            # nothing below it, the box ran to the bottom of the sheet and took in the key plan drawn there)
+            cand = [l for l in lines if l["dir"] == (1, 0) and l["text"].strip() and hb[0] - 18 <= l["bbox"][0] < right and hb[3] - 2 < l["bbox"][1] < bottom]
+            last = hb[3]
+            for r in rows_of(cand):                                 # a row's item and value can be separate texts
+                top, low = min(l["bbox"][1] for l in r["items"]), max(l["bbox"][3] for l in r["items"])
+                if top - last > 30:
+                    break
+                if re.search(r"[=:]|\bTOTAL\b|\d\s*MM\b", r["text"], re.I):    # other text beside it (designations) is passed over
+                    last = low
+            bottom = min(bottom, last + 8)
         if h["kind"] in ("comparative_table", "track_details"):
             # the table is as wide as its header row (details of the drawing may sit right next to it)
-            hdr = [l for l in lines if l["dir"] == (1, 0) and hb[3] - 2 <= l["bbox"][1] <= hb[3] + 40 and hb[0] - 15 <= l["bbox"][0] < right
-                   and re.search(r"PROPOSED|EXISTING", l["text"], re.I)]
+            hdr = [l for l in lines if l["dir"] == (1, 0) and hb[3] - 2 <= l["bbox"][1] <= hb[3] + 40 and hb[0] - 15 <= l["bbox"][0] < min(right, hb[0] + 420)
+                   and re.search(r"PROPOSED|EXISTING", l["text"], re.I) and not re.search(r"-\s*(PROPOSED|EXISTING)|PROP\.?\s*-|EXG\.?\s*-", l["text"], re.I)]
+            # (an abbreviation list beside the table, "PROP. - PROPOSED", is not its header: 827-3)
             if hdr:
                 right = min(right, max(l["bbox"][2] for l in hdr) + 25)
                 h["width"] = right - hb[0]
             else:
-                w = next((g.get("width") for g in heads if g.get("width")), None)
-                if w:
-                    right = min(right, hb[0] + w + 5)
+                # (no header of its own: as wide as the comparative table, else a table's usual width - 780-1's track
+                # details ran across the sheet and hid the curtain wall detail's title)
+                w = next((g.get("width") for g in heads if g.get("width")), None) or                     next((r["box"][2] - r["box"][0] for r in regions if r["kind"] == "comparative_table"), None) or 340
+                right = min(right, hb[0] + w + 5)
         if h["kind"] in ("comparative_table", "track_details"):
             # the table ends at its last numbered row
             serial = sorted([l for l in lines if re.match(r"\d{1,2}\.?(\s|$)", l["text"].strip()) and hb[0] - 18 <= l["bbox"][0] < hb[0] + 45
                              and hb[3] - 2 < l["bbox"][1] < bottom], key=lambda l: l["bbox"][1])
             last = hb[3]
-            for l in serial:
-                if l["bbox"][1] - last > 30:
+            for k, l in enumerate(serial):
+                if l["bbox"][1] - last > (50 if k == 0 else 30):    # (a column header row sits above row 1)
                     break
                 last = l["bbox"][3]
             bottom = min(bottom, last + 8)
         box = [hb[0] - 18, hb[1] - 1, right - 3, bottom - 0.5]
         body = [l for l in lines if l is not h["line"] and inside(centre(l["bbox"]), box) and l["bbox"][1] >= hb[3] - 2]
         regions.append({"kind": h["kind"], "heading": h["line"]["text"], "heading_box": hb, "box": box, "lines": body})
+    # an ADD NOTE box set inside another region (the notes column): its own lines are the ones left-aligned with its
+    # heading, one under the other; they are taken out of the region around it, and only they are the add note
+    for o in regions:
+        if o["kind"] != "add_note":
+            continue
+        hx, last, own = o["heading_box"][0], o["heading_box"][3], []
+        for l in sorted([l for l in lines if l is not o.get("_h") and l["bbox"][1] > o["heading_box"][1] + 1
+                         and abs(l["bbox"][0] - hx) < 8], key=lambda l: l["bbox"][1]):
+            if l["bbox"][1] - last > 25:
+                break
+            own.append(l)
+            last = l["bbox"][3]
+        host = [r for r in regions if r is not o and inside(centre(o["heading_box"]), r["box"])]
+        if host:
+            o["lines"] = own
+            o["box"] = union([o["heading_box"]] + [l["bbox"] for l in own])
+            ids = {id(l) for l in own} | {id(l) for l in lines if l["bbox"] == o["heading_box"]}   # and its heading
+            for r in host:
+                r["lines"] = [l for l in r["lines"] if id(l) not in ids]
     return regions
 
 
@@ -253,7 +291,8 @@ def parse_table(region, words, cols_from=None):
     ws = [w for w in words if inside(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), box) and w[1] >= hb[3] - 1]
     cols = {}
     head_y = None
-    prop = [w for w in ws if re.match(r"PROPOSED", w[4], re.I) and w[1] < hb[3] + 40]
+    abbr = [(w[1] + w[3]) / 2 for w in ws if w[4] in ("-", "–")]          # "PROP. - PROPOSED" in an abbreviation list
+    prop = [w for w in ws if re.match(r"PROPOSED", w[4], re.I) and w[1] < hb[3] + 40 and not any(abs((w[1] + w[3]) / 2 - y) < 3 for y in abbr)]
     if prop:
         p = min(prop, key=lambda w: w[1])
         head_y = (p[1] + p[3]) / 2
@@ -271,17 +310,28 @@ def parse_table(region, words, cols_from=None):
                       and (head_y is None or w[1] > head_y + 3)], key=lambda w: w[1])
     out = []
     for i, s in enumerate(serials):
-        y0 = (s[1] + s[3]) / 2 - 5
-        y1 = (serials[i + 1][1] + serials[i + 1][3]) / 2 - 5 if i + 1 < len(serials) else y0 + 14
-        if out and y0 - out[-1]["_y"] > 30:                  # a gap: the table has ended
+        # a row runs from halfway to the serial above to halfway to the one below (a serial centred on a two-line
+        # description, 815-2's "VERTICAL CLEARANCE AS / PER OHFL", keeps both lines)
+        cy = (s[1] + s[3]) / 2
+        py = (serials[i - 1][1] + serials[i - 1][3]) / 2 if i else None
+        ny = (serials[i + 1][1] + serials[i + 1][3]) / 2 if i + 1 < len(serials) else None
+        y0 = (py + cy) / 2 if py is not None and cy - py < 30 else cy - 6
+        y1 = (cy + ny) / 2 if ny is not None and ny - cy < 30 else cy + 9
+        if out and cy - 5 - out[-1]["_y"] > 30:              # a gap: the table has ended
             break
         rw = sorted([w for w in ws if y0 <= (w[1] + w[3]) / 2 < y1 and w is not s], key=lambda w: (round(w[1] / 4), w[0]))
         desc = " ".join(w[4] for w in rw if split is None or (w[0] + w[2]) / 2 < split)
         if not desc:
             continue
-        row = {"description": re.sub(r"\s+", " ", desc).strip(), "_y": y0}
+        row = {"description": re.sub(r"\s+", " ", desc).strip(), "_y": cy - 5}
+        gapc = abs(cols.get("proposed", 0) - cols.get("existing", 0)) if len(cols) == 2 else 0
         for w in rw:
             cx = (w[0] + w[2]) / 2
+            # a word goes where its text line stands ("CURVED (2.30 DEG.)" is one value: 829-2's "DEG.)" sat nearer
+            # the proposed column), when that line is no wider than a column
+            host = next((l for l in region["lines"] if inside((cx, (w[1] + w[3]) / 2), l["bbox"])), None)
+            if host and gapc and host["bbox"][2] - host["bbox"][0] < gapc:
+                cx = centre(host["bbox"])[0]
             if split is not None and cx < split:
                 continue
             col = min(cols, key=lambda c: abs(cols[c] - cx)) if cols else "value"
@@ -307,7 +357,7 @@ def parse_title_block(lines, page):
     div = next((l for l in lines if re.match(r"^DIVISION\b", l["text"].upper())), None)
     if not div:
         return {}
-    x0 = div["bbox"][0] - 6
+    x0 = div["bbox"][0] - 15                           # (the title's lines may start a little left of DIVISION: 789-1)
     top = next((l["bbox"][1] for l in lines if l["text"].upper().strip() in ("CENTRAL RAILWAY", "WEST CENTRAL RAILWAY")
                 and l["bbox"][0] >= x0 - 60 and l["bbox"][1] < div["bbox"][1]), div["bbox"][1] - 30)
     region = [l for l in lines if l["bbox"][0] >= x0 and l["bbox"][1] >= top - 2 and l["dir"] == (1, 0)
@@ -335,23 +385,68 @@ def parse_title_block(lines, page):
     return out
 
 
+def parse_revisions(lines):
+    """The revision history of the title block: rows of DATE | REV. NO | DESCRIPTION above that header row
+    ("01/07/2025  R0  FIRST SUBMISSION", "18/08/2025  R1  REVISED AS PER RAILWAY'S OBSERVATIONS")."""
+    heads = [l for l in lines if l["dir"] == (1, 0) and re.fullmatch(r"\s*REV\.?\s*NO\.?\s*", l["text"], re.I)]
+    for rev in heads:
+        cy = centre(rev["bbox"])[1]
+        same = [l for l in lines if l["dir"] == (1, 0) and abs(centre(l["bbox"])[1] - cy) < 5]
+        date = next((l for l in same if re.fullmatch(r"\s*DATE\s*", l["text"], re.I) and l["bbox"][0] < rev["bbox"][0]), None)
+        desc = next((l for l in same if re.fullmatch(r"\s*DESCRIPTION\s*", l["text"], re.I) and l["bbox"][0] > rev["bbox"][0]), None)
+        if not (date and desc):
+            continue
+        x0, x1 = date["bbox"][0] - 25, desc["bbox"][2] + 260
+        above = [l for l in lines if l["dir"] == (1, 0) and x0 <= l["bbox"][0] <= x1 and cy - 140 < centre(l["bbox"])[1] < cy - 3]
+        out = []
+        for r in sorted(rows_of(above), key=lambda r: -r["y"]):           # upwards from the header
+            d = next((m.group() for l in r["items"] for m in [re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", l["text"])] if m), None)
+            n = next((m.group() for l in r["items"] for m in [re.fullmatch(r"\s*(R\s*\d+)\s*", l["text"], re.I)] if m), None)
+            if not (d or n):
+                if out:
+                    break
+                continue
+            words = [l["text"].strip() for l in r["items"] if l["bbox"][0] >= desc["bbox"][0] - 140
+                     and not re.fullmatch(r"\s*(R\s*\d+|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*", l["text"], re.I)
+                     and not re.fullmatch(r"\s*(DRAWN|CHECKED|APPROVED)\s*", l["text"], re.I)]   # the signature boxes' heads
+            out.append({"rev_no": re.sub(r"\s", "", n).upper() if n else None, "date": d,
+                        "description": re.sub(r"\s+", " ", " ".join(words)).strip() or None})
+        if out:
+            return sorted(out, key=lambda x: int(re.sub(r"\D", "", x["rev_no"] or "0") or 0))
+    return []
+
+
 def bridge_from_title(title):
     """Bridge no., box size, chainage and the relation to the existing bridge, as written in the title."""
     t = re.sub(r"\s+", " ", title or "")
+    t = re.sub(r"(?<=\d)\.\.(?=\d)", ".", t)                  # "1x1..830m" (827-1)
     info = {}
     m = re.search(r"(MINOR|MAJOR|IMPORTANT)\s+BRIDGE|\bRUB\b|ROAD UNDER BRIDGE|SUBWAY", t, re.I)
     if m:
         info["category"] = m.group(0).upper()
-    m = re.search(r"(?:BRIDGE|RUB)\s*NO\.?\s*([A-Z0-9/\-]+)\s*\(\s*([^)]*?)\s*(?:CH\.?\s*([\d+.]+)\s*M?)?\s*\)", t, re.I)
+    # "BRIDGE NO.810/1 (1x3.660x6.530m RCC BOX AT CH ...)", "RUB 822/2 (1x4.013x3.666m. RCC BOX CH. 77875 )"
+    m = re.search(r"(?:BRIDGE\s*NO\.?|\bRUB\s*(?:NO\.?)?)\s*([A-Z0-9/\-]+)\s*\(\s*([^)]*?)\s*(?:CH[.:]?\s*([\d+.]+)\s*M?)?\s*\)", t, re.I)
     if m:
         info["bridge_no"] = m.group(1)
         info["description"] = re.sub(r"\s+", " ", m.group(2)).strip(" ,")
         if m.group(3):
             info["chainage"] = m.group(3)
-    m = re.search(r"(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*M?", info.get("description", t))
+    else:
+        m = re.search(r"BRIDGE\s*NO\.?\s*([A-Z0-9/\-]+)", t, re.I)
+        if m:
+            info["bridge_no"] = m.group(1)
+    head = info.get("description") or re.split(r"\bEXISTING\b|\bEX\.", t, flags=re.I)[0]
+    # cells x clear width x clear height, units written or not: "1x 4.560mx3.648m", "2x4.890x4.245m"
+    m = re.search(r"(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*M?\s*[xX×]\s*(\d+(?:\.\d+)?)\s*\)?\s*M?", head, re.I)
     if m:
         info["box"] = {"cells": int(m.group(1)), "clear_width_m": float(m.group(2)), "clear_height_m": float(m.group(3)),
                        "as_printed": m.group(0).strip()}
+    else:
+        # a slab bridge: spans x clear span ("1x1.22m RCC SLAB", "PROPOSED SPAN (1X4.57) PSC SLAB")
+        m = re.search(r"(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*M?\s*\)?\s*((?:RCC|PSC)\s*(?:\(?L\.?L\.?\)?\s*)?SLAB)", t, re.I)
+        if m:
+            info["slab"] = {"spans": int(m.group(1)), "clear_span_m": float(m.group(2)), "type": re.sub(r"\s+", " ", m.group(3)).upper(),
+                            "as_printed": m.group(0).strip()}
     if not info.get("chainage"):
         m = re.search(r"CH(?:AINAGE)?\.?\s*[:\-]?\s*([\d+.]+)\s*M?\b", t, re.I)
         if m:
@@ -380,7 +475,7 @@ def find_view_titles(lines, panel_boxes):
             up = neighbour(lines, ref, up=True, max_gap=24,
                            need=lambda o: o["size"] >= (0.85 * first if first else 9.5) and o["i"] not in used
                            and not SCALE_RE.match(o["text"]) and re.search(r"[A-Z]{3}", o["text"])
-                           and o["text"].upper() == o["text"] and not LEVEL_NUM.search(o["text"]))
+                           and re.sub(r"(?<=\d)m\b", "", o["text"]).upper() == re.sub(r"(?<=\d)m\b", "", o["text"]) and not LEVEL_NUM.search(o["text"]))
             if not up:
                 break
             stack.insert(0, up)
@@ -388,7 +483,13 @@ def find_view_titles(lines, panel_boxes):
             ref = up
         if stack:
             title = re.sub(r"\s+", " ", " ".join(l["text"] for l in stack)).replace("`", "'")
-            titles.append({"title": title, "scale": f"1:{m.group(1)}", "lines": stack + [s], "dir": s["dir"]})
+            titles.append({"title": title, "scale": f"1:{m.group(1)}" if m.group(1) else "not to scale", "lines": stack + [s], "dir": s["dir"]})
+    # a key plan is often titled without a scale under it ("KEY PLAN" alone): a sketch for location, not to scale
+    for s in lines:
+        if s["i"] in used or any(s in t["lines"] for t in titles) or any(inside(centre(s["bbox"]), b) for b in panel_boxes):
+            continue
+        if re.fullmatch(r"\s*KEY\s*PLAN\s*(?:\(\s*N\.?\s*T\.?\s*S\.?\s*\)|\(\s*NOT\s+TO\s+SCALE\s*\))?\s*", s["text"], re.I) and s["size"] >= 9:
+            titles.append({"title": "KEY PLAN", "scale": None, "lines": [s], "dir": s["dir"]})
     return titles
 
 
@@ -495,6 +596,35 @@ def view_regions(page, lines, titles, skip_boxes):
     comps = [c for c in comps if c["cells"] >= 4]
     comps = [c for c in comps if not any(overlap(c["box"], b) > 0.3 * max(area(c["box"]), 1) for b in skip_boxes)]
     tboxes = [union([l["bbox"] for l in t["lines"]]) for t in titles]
+    # several titles inside one piece of line work (views in frames that touch, e.g. key plan | road L-section |
+    # ground profile | bore log in a row): share its cells out, each to the nearest title, a view being drawn above its title
+    keep, next_id = [], int(lab.max()) + 1
+    for c in comps:
+        inn = [ti for ti, tb in enumerate(tboxes) if inside(centre(tb), c["box"])]
+        if len(inn) < 2:
+            keep.append(c)
+            continue
+        ys, xs = np.nonzero(lab == c["id"])
+        px, py = (xs + 0.5) * CELL, (ys + 0.5) * CELL
+        cost = []
+        for ti in inn:
+            tb = tboxes[ti]
+            dx = np.maximum(0, np.maximum(tb[0] - px, px - tb[2]))
+            if titles[ti]["dir"] == (1, 0):
+                dy = np.where(py < tb[1], tb[1] - py, np.maximum(0, py - tb[3]) * 3)
+            else:
+                dy = np.maximum(0, np.maximum(tb[1] - py, py - tb[3]))
+            cost.append(2 * dx + dy)
+        who = np.argmin(np.array(cost), axis=0)
+        for k in range(len(inn)):
+            sel = who == k
+            if sel.sum() < 4:
+                continue
+            lab[ys[sel], xs[sel]] = next_id
+            keep.append({"id": next_id, "box": [int(xs[sel].min()) * CELL, int(ys[sel].min()) * CELL, (int(xs[sel].max()) + 1) * CELL,
+                                                (int(ys[sel].max()) + 1) * CELL], "cells": int(sel.sum())})
+            next_id += 1
+    comps = keep
     owner = {}
     for ci, c in enumerate(comps):
         best = None
@@ -693,7 +823,12 @@ def read_dims(lines, views, cls, exclude):
             m = re.search(pat, t, re.I)
             if not m:
                 continue
-            what = (m.groupdict().get("what") or "").strip(" .,-") or None
+            what = (m.groupdict().get("what") or "").strip(" .,-")
+            # "BY (SOLING OF 350MM THK.)" -> "SOLING": no brackets, no leading BY/WITH, no trailing OF
+            what = re.sub(r"[()]", " ", what)
+            what = re.sub(r"^\s*(?:BY|WITH|OF|AND)\s+", "", what, flags=re.I)
+            what = re.sub(r"\s+(?:OF|BY|WITH|AND)\s*$", "", what, flags=re.I)
+            what = re.sub(r"\s+", " ", what).strip(" .,-") or None
             between = describe_between(cls, l, vt) if kind == "track_centres" else None
             mean = meaning.format(what=(what or "item").lower(),
                                   between=(" and the ".join(n.lower() for n in between) if between else "the two tracks shown"))
@@ -721,14 +856,103 @@ def read_dims(lines, views, cls, exclude):
     return labelled, plain, slopes
 
 
-def read_bore_log(view, lines):
-    inside_lines = [l for l in lines if inside(centre(l["bbox"]), view["bbox"])]
+def parse_key_plan(view, lines):
+    """What the key plan shows, as things the model can answer from: the stations on either side, the bridge
+    callouts (existing and proposed), the tracks, curves, gradients, the chainage / KM / FL markers (labels printed
+    stacked together are one marker), the railway boundary and land to be acquired, flow, bore holes."""
+    inv = [l for l in lines if inside(centre(l["bbox"]), view["bbox"]) and l["i"] not in view.get("title_lines", [])
+           and not SCALE_RE.match(l["text"].strip())]
+
+    def ends(l):                                         # start and "across" direction of a line in its own frame
+        d = l["dir"]
+        start = (l["bbox"][0], l["bbox"][1]) if d == (1, 0) else (l["bbox"][0], l["bbox"][3]) if d == (0, -1) else (l["bbox"][2], l["bbox"][1])
+        return start, (-d[1], d[0])
+
+    groups, used = [], set()
+    for l in sorted(inv, key=lambda l: (l["bbox"][1], l["bbox"][0])):
+        if l["i"] in used:
+            continue
+        g, cur = [l], l
+        while True:
+            (sx, sy), (nx, ny) = ends(cur)
+            nxt = None
+            for o in inv:
+                if o["i"] in used or o in g or o["dir"] != cur["dir"]:
+                    continue
+                (ox, oy), _ = ends(o)
+                across = (ox - sx) * nx + (oy - sy) * ny
+                along = (ox - sx) * cur["dir"][0] + (oy - sy) * cur["dir"][1]
+                if 0.5 * cur["size"] < across < 2.2 * cur["size"] and abs(along) < 3 * cur["size"]:
+                    nxt = o if nxt is None or across < ((ends(nxt)[0][0] - sx) * nx + (ends(nxt)[0][1] - sy) * ny) else nxt
+            if nxt is None:
+                break
+            g.append(nxt)
+            cur = nxt
+        used.update(x["i"] for x in g)
+        groups.append(g)
+
+    kp = {"stations": [], "bridges": [], "tracks": [], "curves": [], "gradients": [], "markers": [], "boundary": [],
+          "flow": False, "bore_holes": 0, "other": []}
+    cx_view = (view["bbox"][0] + view["bbox"][2]) / 2
+    for g in groups:
+        t = re.sub(r"\s+", " ", " ".join(x["text"].replace("|", " ") for x in g)).strip()
+        T = t.upper()
+        x = centre(union([o["bbox"] for o in g]))[0]
+        if re.search(r"\bBR(?:IDGE)?\b|\bBR-|\bRCC\s+BOX\b|\bSLAB\b", T) and len(T) > 12:
+            kp["bridges"].append(t)
+        elif re.search(r"\b(STATION|STN\.?)\b", T) or re.fullmatch(r"TO\s+(?!BE\b|THE\b|ALL\b)[A-Z]{3,}(?:\s+[A-Z]{3,})?", T) or \
+                (g[0]["size"] >= 10.5 and re.fullmatch(r"[A-Z]{4,}", T) and not re.search(r"KEY|PLAN|FLOW|LEVEL|BOUNDARY|NORTH", T)):
+            # a station: "... STATION" / "... STN.", "TO NAGPUR", or a town's name alone in large type ("ITARSI")
+            kp["stations"].append({"name": re.sub(r"\b(TO|STATION|STN\.?)\b", "", T).strip(" .") or T,
+                                   "text": t, "side": "left" if x < cx_view else "right"})
+        elif re.search(r"\bCH\s*[:.]|\bKM\s*[:.]|\bFL\s*[:.]", T):
+            m = {}
+            for key, pat in (("ch", r"\bCH\s*[:.]?\s*([\d+.]+)"), ("km", r"\bKM\s*[:.]?\s*([\d.]+)"), ("fl", r"\bFL\s*[:.]?\s*([\d.]+)")):
+                v = re.search(pat, T)
+                if v:
+                    m[key] = v.group(1).rstrip(".")
+            m["text"] = t
+            kp["markers"].append(m)
+        elif re.search(r"\bM/L\b|\b\d(?:ST|ND|RD|TH)\s*/?\s*L\b|\bLINE\b|\bLOOP\b|\bGOODS\b", T):
+            if T not in [s.upper() for s in kp["tracks"]]:
+                kp["tracks"].append(t)
+        elif re.fullmatch(r"R\s*\d+(?:\.\d+)?\s*M?", T):
+            kp["curves"].append(t)
+        elif re.search(r"\b(FALL|RISE)\s*1\s*IN\s*\d|^R\s*1\s*IN\b|^F\s*1\s*IN\b|^LEVEL$", T):
+            kp["gradients"].append(t)
+        elif re.search(r"BOUNDARY|LAND\s+TO\s+BE\s+ACQUIRED|ROW\b", T):
+            if T not in [s.upper() for s in kp["boundary"]]:
+                kp["boundary"].append(t)
+        elif T == "FLOW":
+            kp["flow"] = True
+        elif re.fullmatch(r"B\.?H\.?(\s*-?\s*\d+)?", T):
+            kp["bore_holes"] += 1
+        else:
+            kp["other"].append(t)
+    kp["stations"].sort(key=lambda s: 0 if s["side"] == "left" else 1)
+    return kp
+
+
+def read_bore_log(view, lines, skip=()):
+    box = view["bbox"]
+    if box[3] - box[1] < 60:
+        # the view came out as its title alone (its line work joined a bigger view's): the log is the column of text
+        # standing right above the title
+        box = [box[0] - 60, box[1] - 330, box[2] + 90, box[3]]
+    inside_lines = [l for l in lines if inside(centre(l["bbox"]), box) and not any(inside(centre(l["bbox"]), b) for b in skip)]
     sbc, layers, rls = [], [], []
     for l in sorted(inside_lines, key=lambda l: centre(l["bbox"])[1]):
         t = re.sub(r"\s+", " ", l["text"].replace("|", " ")).strip()
-        m = re.search(r"SBC\s*[=:]?\s*(\d+(?:\.\d+)?)\s*T\s*/\s*M[²2]?\s*(\d+(?:\.\d+)?)?", t, re.I)
+        m = re.search(r"SBC\s*[=:]?\s*(\d+(?:\.\d+)?)\s*T\s*/\s*M\s*[²2]?\s*(\d+(?:\.\d+)?)?", t, re.I)   # "T/M 2" is m², not a depth
         if m:
-            sbc.append({"sbc_t_per_m2": float(m.group(1)), "depth_m": float(m.group(2)) if m.group(2) else None, "text": t})
+            depth = float(m.group(2)) if m.group(2) else None
+            if depth is None:                                    # the depth is often its own text on the same row
+                cy = centre(l["bbox"])[1]
+                d = [o for o in inside_lines if abs(centre(o["bbox"])[1] - cy) < 4 and 0 <= o["bbox"][0] - l["bbox"][2] < 120
+                     and re.fullmatch(r"\d{1,2}\.\d{1,3}", o["text"].strip())]
+                if d:
+                    depth = float(min(d, key=lambda o: o["bbox"][0])["text"])
+            sbc.append({"sbc_t_per_m2": float(m.group(1)), "depth_m": depth, "text": t})
             continue
         m = re.match(r"^R\.?L\.?\s*[:=]?\s*(\d{2,4}\.\d{1,3})", t, re.I)
         if m:
@@ -736,7 +960,7 @@ def read_bore_log(view, lines):
             continue
         if re.search(r"SOIL|SAND|CLAY|ROCK|GRAVEL|MURUM|MOORUM|SILT|BOULDER|STRATA|BASALT|SHALE", t, re.I) and not SCALE_RE.match(t) \
                 and "BORE" not in t.upper() and l not in view.get("title_lines", []):
-            if layers and centre(l["bbox"])[1] - layers[-1]["y"] < 12:
+            if layers and centre(l["bbox"])[1] - layers[-1]["y"] <= 13:
                 layers[-1]["soil"] += " " + t
                 layers[-1]["y"] = centre(l["bbox"])[1]
             else:
@@ -745,6 +969,112 @@ def read_bore_log(view, lines):
         x.pop("y")
     m = re.search(r"CH\.?\s*[:\-]?\s*([\d+.]+)\s*M?|AT\s*([\d+.]+)\s*M", view["title"], re.I)
     return {"view": view["title"], "chainage": (m.group(1) or m.group(2)) if m else None, "sbc": sbc, "layers": layers, "rl_marks": rls}
+
+
+BAND_KINDS = ("road_lsection", "drain_lsection", "ground_profile")
+BAND_LABEL = re.compile(r"LEVEL|LVL|CHAINAGE|OFFSET|DISTANCE|\bR\.?L\b|DEPTH", re.I)
+BAND_NUM = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def parse_bands(lines, views, exclude):
+    """The value tables under road / drain L-sections and ground profiles: rows labelled at the left ("ROAD LEVEL (M)",
+    "INVERT LVL OF DRAIN", "GROUND LEVEL", "CHAINAGE", "OFFSET"), one value per column, often written upright.
+    Read over the whole sheet (a band's labels and values often fall in a neighbouring view's box), then each band goes to
+    the L-section / profile view whose title stands under it. Returns {view index: band}, ids of the value texts."""
+    pool = [l for l in lines if l["i"] not in exclude]
+    labels = [l for l in pool if l["dir"] == (1, 0) and BAND_LABEL.search(l["text"]) and not BAND_NUM.fullmatch(l["text"].strip())
+              and len(l["text"]) < 40 and not re.search(r"\d{3}\.\d|:", l["text"])]
+    nums = []
+    for l in pool:
+        t = l["text"].strip()
+        if BAND_NUM.fullmatch(t):
+            nums.append(l)
+        elif re.fullmatch(r"-?\d+(?:\.\d+)?(?:\s+-?\d+(?:\.\d+)?)+", t):
+            # two values of one column run together into one text ("81360 453.296" written upright: chainage below,
+            # ground level above): each part where it stands along the text
+            x0, y0, x1, y1 = l["bbox"]
+            for m in re.finditer(r"\S+", t):
+                f0, f1 = m.start() / len(t), m.end() / len(t)
+                if l["dir"] == (0, -1):                       # upright, read bottom to top
+                    bb = (x0, y1 - f1 * (y1 - y0), x1, y1 - f0 * (y1 - y0))
+                elif l["dir"] == (0, 1):
+                    bb = (x0, y0 + f0 * (y1 - y0), x1, y0 + f1 * (y1 - y0))
+                else:
+                    bb = (x0 + f0 * (x1 - x0), y0, x0 + f1 * (x1 - x0), y1)
+                nums.append({"i": l["i"], "text": m.group(0), "bbox": bb, "dir": l["dir"]})
+    near = defaultdict(list)
+    for n in nums:
+        cy = centre(n["bbox"])[1]
+        cand = [(abs(centre(b["bbox"])[1] - cy), k) for k, b in enumerate(labels) if n["bbox"][0] > b["bbox"][2] - 2]
+        if cand and min(cand)[0] < 20:
+            near[min(cand)[1]].append(n)
+    rows = []
+    for k, ns in near.items():
+        chain, last = [], labels[k]["bbox"][2]
+        for n in sorted(ns, key=lambda n: n["bbox"][0]):
+            if n["bbox"][0] - last > (220 if not chain else 150):
+                break
+            chain.append(n)
+            last = n["bbox"][2]
+        if len(chain) >= 3:
+            rows.append({"label": re.sub(r"\s+", " ", labels[k]["text"]).strip(), "lab": labels[k], "vals": chain})
+    # rows stacked under one another with their labels in one column make one band
+    bands = []
+    for r in sorted(rows, key=lambda r: r["lab"]["bbox"][1]):
+        b = next((b for b in bands if abs(b[-1]["lab"]["bbox"][0] - r["lab"]["bbox"][0]) < 60
+                  and 0 < r["lab"]["bbox"][1] - b[-1]["lab"]["bbox"][1] < 70), None)
+        if b:
+            b.append(r)
+        else:
+            bands.append([r])
+    out, ids = {}, set()
+    for b in bands:
+        box = union([r["lab"]["bbox"] for r in b] + [n["bbox"] for r in b for n in r["vals"]])
+        cand = []
+        for vi, v in enumerate(views):
+            if v["kind"] not in BAND_KINDS:
+                continue
+            tb = union([l["bbox"] for l in lines if l["i"] in v["title_lines"]]) if v.get("title_lines") else v["bbox"]
+            if box[0] - 30 <= centre(tb)[0] <= box[2] + 30 and -10 <= tb[1] - box[3] <= 120:
+                cand.append((tb[1] - box[3], vi))
+        if not cand:
+            continue
+        vi = min(cand)[1]
+        cols = []
+        for r in b:
+            for n in r["vals"]:
+                x = centre(n["bbox"])[0]
+                c = next((c for c in cols if abs(c["_x"] - x) < 8 and r["label"] not in c), None)
+                if c is None:
+                    c = {"_x": x}
+                    cols.append(c)
+                c[r["label"]] = n["text"].strip()
+        cols.sort(key=lambda c: c["_x"])
+        for c in cols:
+            c.pop("_x")
+        band = out.setdefault(vi, {"rows": [], "columns": []})
+        band["rows"] += [{"label": r["label"], "values": [n["text"].strip() for n in r["vals"]]} for r in b]
+        band["columns"] += cols
+        ids |= {n["i"] for r in b for n in r["vals"]}
+    return out, ids
+
+# people are never read from a GAD: the names come from its own digital signatures ("<NAME> Digitally signed by <NAME>")
+SIGNED_BY = re.compile(r"signed\s+by\s*:?\s*([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]*){0,3})|^\s*([A-Z][A-Z.]+(?:\s+[A-Z][A-Z.]+){0,3})\s+Digitally\b")
+DESIGNATION = re.compile(r"^\(?\s*(SSE|JE|AEN|XEN|AXEN|DEN|ADEN|SR\.?\s*DEN|SRDEN|DYCE|DY\.?\s*CE|CE|CPM|ADRM|DRM|EE|AEE|PCE|CAO)\b[-A-Z0-9/ .()]*\)?\s*$")
+NOT_NAMES = {"DIGITALLY", "SIGNED", "DATE", "BY", "THE", "AND"}
+
+
+def private_lines(lines):
+    """Ids of the lines that are about people: digital signatures, the names in them wherever else they are printed,
+    and the officials' designations."""
+    words = set()
+    for l in lines:
+        for m in SIGNED_BY.finditer(l["text"]):
+            words |= {w.strip(".") for w in (m.group(1) or m.group(2)).upper().split() if len(w.strip(".")) >= 4} - NOT_NAMES
+    name_re = re.compile(r"\b(" + "|".join(sorted(map(re.escape, words))) + r")\b", re.I) if words else None
+    return {l["i"] for l in lines if (SIGNATURE.search(l["text"]) and not re.fullmatch(r"\s*signature\s+block\s*", l["text"], re.I))
+            or DESIGNATION.match(l["text"].strip()) or re.search(r"Date\s*:\s*20\d\d\.\d\d\.\d\d\s+\d\d:\d\d", l["text"])
+            or (name_re and name_re.search(l["text"]))}
 
 
 # ======================================================================== one GAD
@@ -759,18 +1089,50 @@ def annotate(pdf):
     if page.rotation:                                  # some sheets are stored rotated: read them as they are seen
         page.remove_rotation()
     lines = load_lines(page)
-    words = page.get_text("words")
+    private = private_lines(lines)
+    sigs = [l for l in lines if SIGNATURE.search(l["text"])]
+    pboxes = [l["bbox"] for l in lines if l["i"] in private]
+    lines = [l for l in lines if l["i"] not in private]
+    words = [w for w in page.get_text("words") if not any(inside(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), b) for b in pboxes)]
     heads = find_headings(lines)
     regions = heading_regions(lines, heads, page.rect.width, page.rect.height)
     panel_boxes = [r["box"] for r in regions]
     tb = parse_title_block(lines, page)
     div = next((l for l in lines if re.match(r"^DIVISION\b", l["text"].upper())), None)
-    sigs = [l for l in lines if SIGNATURE.search(l["text"])]
     skip = list(panel_boxes)
     if div:
         skip.append([div["bbox"][0] - 8, div["bbox"][1] - 60, page.rect.width, page.rect.height])
     if sigs:
-        skip.append(union([l["bbox"] for l in sigs]))
+        # one box per group of signatures that sit together: one box round all of them reached over the drawing
+        # between them (812-1: it hid the bore log)
+        groups = []
+        for l in sorted(sigs, key=lambda l: (l["bbox"][1], l["bbox"][0])):
+            g = next((g for g in groups if gap(union(g), l["bbox"]) < 40), None)
+            if g:
+                g.append(l["bbox"])
+            else:
+                groups.append([l["bbox"]])
+        skip += [[u[0] - 60, u[1] - 10, u[2] + 60, u[3] + 10] for u in (union(g) for g in groups)]   # (the names beside them too)
+    # the strip of boxes along the bottom edge (contractor, design consultant, client, authority engineer: logos, names,
+    # addresses, signatures) starts at a long rule above its labels: none of it is drawing
+    strip_labels = [l for l in lines if re.fullmatch(r"\(?(CONTRACTOR|DESIGN\s+CONSULTANTS?|CLIENT|AUTHORITY\s+ENGINEER)\)?", l["text"].strip(), re.I)]
+    if strip_labels:
+        rules = [(min(it[1].x, it[2].x), it[1].y, max(it[1].x, it[2].x)) for d in page.get_drawings() for it in d["items"]
+                 if it[0] == "l" and abs(it[1].y - it[2].y) < 0.6 and abs(it[2].x - it[1].x) > 400]
+        for l in strip_labels:
+            cx = centre(l["bbox"])[0]
+            over = [r for r in rules if r[0] - 2 <= cx <= r[2] + 2 and l["bbox"][1] - 160 <= r[1] <= l["bbox"][1] - 40]   # (not a band table's rule higher up)
+            if over:
+                x0, y, x1 = max(over, key=lambda r: r[1])          # the one right above the cells
+                skip.append([x0 - 2, y - 2, x1 + 2, page.rect.height])
+            # and the cell above each label (the name, firm or logo it labels), wherever the strip's rules are
+            skip.append([l["bbox"][0] - 40, l["bbox"][1] - 130, l["bbox"][2] + 40, min(page.rect.height, l["bbox"][3] + 40)])
+    # a small box drawn round a panel item (the depth of track structure): its frame is not view line work
+    for d in page.get_drawings():
+        r = d["rect"]
+        if r.width < 600 and r.height < 600 and any(r.x0 - 1 <= h["heading_box"][0] and h["heading_box"][2] <= r.x1 + 1
+                                                    and r.y0 - 1 <= h["heading_box"][1] and h["heading_box"][3] <= r.y1 + 1 for h in regions):
+            skip.append([r.x0 - 2, r.y0 - 2, r.x1 + 2, r.y1 + 2])
     titles = find_view_titles(lines, panel_boxes)
     boxes, (lab, comp_view) = view_regions(page, lines, titles, skip)
     GRID.update(lab=lab, comp_view=comp_view)
@@ -793,14 +1155,20 @@ def annotate(pdf):
                     v["represents"] = K.view_kind("SECTIONAL ELEVATION OF EXISTING BRIDGE")[1] + \
                         " (Its title says only 'SECTIONAL ELEVATION'; its labels show it is the existing bridge.)"
 
-    levels, used = read_levels(lines, views, exclude)
+    bands, band_ids = parse_bands(lines, views, exclude)
+    for vi, band in bands.items():
+        views[vi]["band"] = band
+    levels, used = read_levels(lines, views, exclude | band_ids)
     cls = centre_lines(lines, views)
     cl_ids = {c["line"] for c in cls} | {l["i"] for l in lines if l["text"].strip() == "L"}
-    labelled, plain, slopes = read_dims(lines, views, cls, exclude | used | cl_ids)
+    labelled, plain, slopes = read_dims(lines, views, cls, exclude | used | cl_ids | band_ids)
     for v in views:
         v_lines = [l for l in lines if l["i"] not in exclude and assign_view(centre(l["bbox"]), views) is v]
         v["texts"] = [re.sub(r"\s+", " ", l["text"].replace("|", " ")).strip() for l in sorted(v_lines, key=lambda l: (round(centre(l["bbox"])[1] / 6), l["bbox"][0]))]
-    bore_logs = [read_bore_log(v, lines) for v in views if v["kind"] == "bore_log"]
+    bore_logs = [read_bore_log(v, lines, skip) for v in views if v["kind"] == "bore_log"]
+    for v in views:
+        if v["kind"] == "key_plan":
+            v["key_plan"] = parse_key_plan(v, lines)
 
     notes = {}
     tables = {}
@@ -816,7 +1184,9 @@ def annotate(pdf):
         elif k == "legends":
             notes[k] = [re.sub(r"\s+", " ", x["text"]) for x in rows_of(r["lines"])]
         elif k in ("comparative_table", "track_details"):
-            tables[k] = parse_table(r, words, cols_from=(tables.get("comparative_table") or {}).get("_cols"))
+            t = parse_table(r, words, cols_from=(tables.get("comparative_table") or {}).get("_cols"))
+            if len(t["rows"]) >= len((tables.get(k) or {}).get("rows", [])):    # the same heading met again elsewhere
+                tables[k] = t
         elif k == "depth_of_track_structure":
             tables[k] = parse_key_values(r["lines"])
     for key, pat in (("seismic_zone", r"^SEISMIC\s+ZONE\s*:\s*(.*)$"), ("standard_of_loading", r"^STANDARD\s+OF\s+LOADING\s*:\s*(.*)$")):
@@ -834,6 +1204,7 @@ def annotate(pdf):
 
     gid, ver = gad_id_of(pdf)
     bridge = bridge_from_title(tb.get("title", ""))
+    tb["revisions"] = parse_revisions(lines)
     ann = {"gad_id": gid, "version": ver, "source_pdf": Path(pdf).name, "page_size": [page.rect.width, page.rect.height],
            "title_block": tb, "bridge": bridge, "views": views, "levels": levels, "centre_lines": cls,
            "labelled_dims": labelled, "slopes": slopes, "dims": plain, "tables": tables, "bore_logs": bore_logs, "notes": notes,

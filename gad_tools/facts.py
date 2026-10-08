@@ -42,7 +42,12 @@ SYN = {
     "seismic": ["seismic", "zone"],
     "load": ["loading", "load", "axle"],
     "loading": ["loading", "load", "axle"],
-    "revision": ["rev", "revision"],
+    "revision": ["rev", "revision", "history", "submission"],
+    "revisions": ["rev", "revision", "history"],
+    "station": ["station", "end", "key"],
+    "stations": ["station", "end", "key"],
+    "key": ["key", "plan"],
+    "location": ["key", "plan", "station"],
     "drawing": ["dwg", "drawing"],
     "number": ["no", "dwg"],
     "chainage": ["chainage", "ch", "km"],
@@ -65,6 +70,11 @@ SYN = {
     "ballast": ["ballast", "cushion"],
     "sleeper": ["sleeper", "psc"],
     "level": ["lvl", "level"],
+    "invert": ["invert", "drain"],
+    "drain": ["drain", "invert"],
+    "road": ["road", "rd"],
+    "offset": ["offset", "chainage"],
+    "profile": ["ground", "profile"],
     "lvl": ["lvl", "level"],
     "views": ["view"],
     "inconsistency": ["disagreement", "differs"],
@@ -89,6 +99,21 @@ def view_name(title):
     return title or "outside the views"
 
 
+def components(a):
+    """[(name, explanation, [views it appears on], in_notes)] for the parts of the box this drawing shows or mentions."""
+    import gad_kinds as K
+    notes = " ".join(it["text"] for k in ("notes", "special_note", "add_note", "fill_note") for it in (a.get("notes") or {}).get(k, []))
+    out = []
+    for pat, name, what in K.COMPONENTS:
+        views = [v["title"] for v in a.get("views", [])
+                 if re.search(pat, " ".join(v.get("texts", [])) + " " + v["title"], re.I)]
+        views += sorted({l["view"] for l in a.get("levels", []) if l["view"] and re.search(pat, l["label"], re.I)} - set(views))
+        in_notes = bool(re.search(pat, notes, re.I))
+        if views or in_notes:
+            out.append((name, what, views, in_notes))
+    return out
+
+
 def all_facts(a):
     """Every fact of a GAD annotation: [{"group", "text", "ref"}] - one short line each."""
     F = []
@@ -102,6 +127,9 @@ def all_facts(a):
     t = "Bridge (from the title): " + " ".join(p for p in parts if p)
     if box:
         t += f" -> {box['cells']} cell(s), clear width {fnum(box['clear_width_m'])} m, clear height {fnum(box['clear_height_m'])} m"
+    elif b.get("slab"):
+        sl = b["slab"]
+        t += f" -> a slab bridge, not a box: {sl['spans']} span(s) of clear span {fnum(sl['clear_span_m'])} m, {sl['type']}"
     if b.get("relation_to_existing"):
         t += f"; {b['relation_to_existing']}"
     add("bridge", t, "bridge")
@@ -116,9 +144,12 @@ def all_facts(a):
         if tb.get("name_of_work"):
             add("title_block", "Name of work: " + tb["name_of_work"], "work")
     if a.get("views"):
-        add("views", "Views on the drawing: " + "; ".join(f"{v['title']} ({v['scale']})" for v in a["views"]), "views")
+        add("views", "Views on the drawing: " + "; ".join(f"{v['title']} ({v['scale'] or 'no scale written'})" for v in a["views"]), "views")
     for v in a.get("views", []):
-        add("view", f"View '{v['title']}' (scale {v['scale']}): {v['represents']}", ("view", v["title"]))
+        add("view", f"View '{v['title']}' (scale {v['scale'] or 'not written'}): {v['represents']}", ("view", v["title"]))
+    if tb.get("revisions"):
+        add("title_block", "Revision history: " + "; ".join(f"{r['rev_no']} dated {r['date'] or '(no date)'}: {r['description'] or '(no description)'}"
+                                                         for r in tb["revisions"]), "revisions")
     # levels, grouped: the same label and value on several views is one fact
     seen = defaultdict(list)
     for l in a.get("levels", []):
@@ -176,10 +207,41 @@ def all_facts(a):
         add("note", f"Seismic zone: {n['seismic_zone']}", ("seismic",))
     if n.get("standard_of_loading"):
         add("note", f"Standard of loading: {n['standard_of_loading']}", ("loading",))
+    for name, what, views, in_notes in components(a):
+        where = ("shown on " + ", ".join(views[:4])) if views else "mentioned in the notes"
+        add("component", f"Component: {name} ({where}) - {what}", ("comp", name))
     for f in a.get("findings", []):
         add("finding", f"Disagreement on the drawing: {f}", ("finding", f[:30]))
     for v in a.get("views", []):
-        if v["kind"] in ("key_plan",) and v.get("texts"):
+        bd = v.get("band")
+        if bd:
+            labels = [r["label"] for r in bd["rows"]]
+            cols = [" / ".join(f"{k} {c[k]}" for k in labels if k in c) for c in bd["columns"]]
+            for k in range(0, len(cols), 12):                     # (a long table in parts, so a part fits a prompt)
+                part = f" (columns {k + 1}-{min(k + 12, len(cols))} of {len(cols)})" if len(cols) > 12 else ""
+                add("band", f"Value table under '{v['title']}'{part} ({len(labels)} rows: {', '.join(labels)}; {len(cols)} columns), column by column, left to right: "
+                    + " | ".join(cols[k:k + 12]), ("band", v["title"], k // 12))
+    for v in a.get("views", []):
+        kp = v.get("key_plan")
+        if kp:
+            for side in ("left", "right"):
+                st = [x["text"] for x in kp.get("stations", []) if x["side"] == side]
+                if st:
+                    add("key_plan", f"Key plan, {side} end of the line: " + "; ".join(st), ("kp", "stations", side))
+            for key, label in (("bridges", "Bridge callouts"), ("tracks", "Tracks"), ("curves", "Curves"), ("gradients", "Gradients"),
+                               ("boundary", "Land/boundary")):
+                if kp.get(key):
+                    add("key_plan", f"Key plan, {label.lower()}: " + " | ".join(dict.fromkeys(kp[key])), ("kp", key))
+            if kp.get("markers"):
+                add("key_plan", "Key plan, chainage/KM/FL marks: " + " | ".join(m["text"] for m in kp["markers"]), ("kp", "markers"))
+            extra = []
+            if kp.get("flow"):
+                extra.append("a direction-of-flow arrow")
+            if kp.get("bore_holes"):
+                extra.append(f"{kp['bore_holes']} bore hole location(s)")
+            if extra:
+                add("key_plan", "Key plan also shows " + " and ".join(extra), ("kp", "extra"))
+        elif v["kind"] in ("key_plan",) and v.get("texts"):
             add("view_text", f"Text on the {v['title']}: " + " | ".join(v["texts"])[:900], ("vtext", v["title"]))
     return F
 
@@ -238,7 +300,7 @@ def select(a, question, must=(), max_facts=MAX_FACTS):
         chosen.append(i)
         chars += len(facts[i]["text"])
     order = {g: k for k, g in enumerate(["bridge", "views", "title_block", "view", "level", "dim", "plain_dims", "table", "bore_log",
-                                         "note", "abbreviation", "finding", "view_text"])}
+                                         "band", "note", "abbreviation", "component", "finding", "key_plan", "view_text"])}
     chosen.sort(key=lambda i: (order.get(facts[i]["group"], 99), i))
     return [facts[i] for i in chosen]
 
