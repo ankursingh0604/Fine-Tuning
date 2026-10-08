@@ -103,19 +103,26 @@ def parse_callout(text, hint=None):
             row["br_no"] = clean(t[h.start():h.end()])
             before = t[:h.start()]
             rest = ("" if PREFIX.match(before) else re.sub(r"(?:C/L\s*OF\s*)?(?:EXG?\.?\s*)?(?:BR\.?\s*NO\.?\s*)?$", "", before, flags=re.I)
-                    ) + " " + t[h.end():]
+                    ) + xing_word(row["br_no"]) + t[h.end():]
             return finish(row, rest, text)
     x = XING.search(t)
     m = ITEM_ID.match(t)
     if x:
         row["br_no"] = clean(x.group())
-        rest = (t[:x.start()] + " " + t[x.end():])
+        rest = t[:x.start()] + xing_word(row["br_no"]) + t[x.end():]
     elif m:
         row["br_no"] = clean(m.group("id"))
         rest = t[m.end():]
     else:
         return row
     return finish(row, rest, text)
+
+
+def xing_word(br_no):
+    """A level crossing's number sits in the middle of what it is ("'SPL' CLASS L-XING NO. 10 (MANNED)"): taking the
+    number out must leave "L-XING" in the structure ("'SPL' CLASS L-XING (MANNED)"), not "'SPL' CLASS (MANNED)"."""
+    m = re.match(r"\s*(L-?XING)\b", br_no or "", re.I)
+    return f" {m.group(1)} " if m else " "
 
 
 def finish(row, rest, text):
