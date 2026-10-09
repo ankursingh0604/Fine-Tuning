@@ -37,6 +37,20 @@ FL_RE = re.compile(r"\bF\.?L\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.I)
 # "Br. No. 239AUP", "bridge 214 UP", and a number with UP / DN on its own: "FL value for 224UP"
 BRIDGE_REF = re.compile(r"(?:\bbr(?:idge)?\.?\s*(?:no\.?)?\s*[:.\-]?\s*|\b(?=\d{1,4}A?(?:UP|DN)\b))(\d+(?:[a-z]{1,3}|\s(?:up|dn))?)\b", re.I)
 # a curve named in a question: "curve 8", "curve no. 8", "C-8", "C. NO. - 8", "C.NO.17U" (not "CH 11540", "TPCC2")
+# a list of bridges after one "bridge": "bridge 224, 225, 227 & 230", "BR. NOS. 12 and 14", "bridges 224UP / 225 DN"
+BRIDGE_LIST = re.compile(r"\bbr(?:idge)?s?\.?\s*(?:nos?\.?)?\s*[:.\-]?\s*(\d+[a-z]{0,3}(?:\s+(?:up|dn)\b)?"
+                         r"(?:\s*(?:,|&|/|\band\b)\s*\d+[a-z]{0,3}(?:\s+(?:up|dn)\b)?)*)", re.I)
+
+
+def bridge_nums(q):
+    """Every bridge number a question names, in its order: "224", "224UP" ("bridge 224, 225, 227, 230" -> all four)."""
+    found = [n for m in BRIDGE_LIST.finditer(q) for n in re.findall(r"\d+[a-z]{0,3}(?:\s+(?:up|dn)\b)?", m.group(1), re.I)]
+    found += BRIDGE_REF.findall(q)
+    return list(dict.fromkeys(re.sub(r"\s+", "", n).upper() for n in found))
+
+
+# "details about bridge 224, 225": the template-layout CSV (with "csv" / "excel" ... too)
+DETAILS_Q = re.compile(r"\bdetails?\b|\babout\b|\binfo(?:rmation)?\b", re.I)
 CURVE_ID = re.compile(r"\b(?:curve\s*(?:no\.?)?|c\.?\s*no\.?|c)\s*[-.:]?\s*(\d+[a-z]*)\b", re.I)
 GRADE_WORDS = re.compile(r"\b(gradient|grade|slope|rise|fall|falling|rising|grade\s*point|gp|vpi)\b", re.I)
 STOP = set("what is the of at on in a an and or to for give me tell show please value values written this that which "
@@ -247,6 +261,81 @@ def export_bridges(rows, path, q, owner):
     return f"{head}\n{text}\n{tail}"
 
 
+CARD_Q = re.compile(r"\b(csv|excel|xlsx|spreadsheet|template)\b", re.I)
+
+
+def wants_card(q, nums):
+    """The question asks for bridges' details as the template-layout CSV: "... in csv / excel", or "details / about /
+    information" of bridges it names (not a curve, not one value such as "FL of bridge 264")."""
+    if re.search(r"\bcurves?\b", q, re.I):
+        return False
+    return bool(CARD_Q.search(q)) or bool(nums) and bool(DETAILS_Q.search(q))
+
+
+def not_found(nums, rows):
+    """The bridge numbers asked for that no row is ("224" is found by "224 DN" / "224DN")."""
+    have = [re.sub(r"\s", "", (r.get("br_no") or "")).upper() for r in rows]
+    return [n for n in nums if not any(h == n or re.fullmatch(re.escape(n) + r"(UP|DN)", h) for h in have)]
+
+
+def sheet_objects_text(parts):
+    import sheet_objects
+    return sheet_objects.joined(parts).text
+
+
+def export_cards(items, folder, name, owner):
+    """Write [(card, row read, row from the PDF text, where)] in the arch_rcc layout: one bridge -> one CSV; several ->
+    one CSV each (the same layout, existing / proposed columns) packed in a zip. The answer gives the file, the filled
+    rows (one bridge) or the bridges in it, and every value read differently from the PDF. owner.last_export keeps the
+    file for a UI."""
+    import zipfile
+    import bridge_card
+    import bridge_list
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    tag = lambda g: re.sub(r"[^A-Za-z0-9]+", "", g["br_no"] or "bridge")
+    if len(items) == 1:
+        path = bridge_card.write([items[0][0]], folder / f"{name}_{tag(items[0][1])}_details.csv")
+        preview = path.read_text(encoding="utf-8-sig")
+    else:
+        path = folder / f"{name}_bridges_details.zip"
+        used = set()
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            for c, g, _, _ in items:
+                fn = f"{name}_{tag(g)}_details.csv"
+                k = 2
+                while fn in used:                          # (the same number twice on a sheet: both kept)
+                    fn, k = f"{name}_{tag(g)}_{k}_details.csv", k + 1
+                used.add(fn)
+                z.writestr(fn, BOM + "".join(",".join(_csv_cell(v) for v in r) + "\r\n" for r in bridge_card.table([c])))
+        preview = "\n".join(sorted(used))
+    issues = [line for _, g, w, where in items for line in bridge_list.problems(g, w, where)]
+    issues += [where + g["_degree_check"] for _, g, _, where in items if g.get("_degree_check")]
+    owner.last_export = {"path": path, "csv": path, "rows": [g for _, g, _, _ in items], "issues": issues, "kind": "card",
+                         "preview": preview}
+    head = (f"{len(items)} bridge{'s' if len(items) != 1 else ''} in the arch_rcc layout"
+            + (" (one CSV each, in a zip)" if len(items) > 1 else "")
+            + f" - RDSO NO. {bridge_card.RDSO}, skew angle 0, end distance 0; rows not printed on an L-section left empty · "
+              f"saved as {path}")
+    tail = ("Every value was read by the model and matches the PDF text" if not issues else
+            "CHECK · these readings differ from the PDF text:\n" + "\n".join("  " + i for i in issues))
+    if len(items) > 1:
+        body = ("In it: " + ", ".join(f"{g['br_no']} (CH {bridge_card.chainage_m(g['chainage']) or '?'})" for _, g, _, _ in items)
+                + ". For one bridge ask 'bridge <number> details in csv'.")
+    else:
+        body = bridge_card.text([items[0][0]])
+    return f"{head}\n{body}\n{tail}"
+
+
+BOM = chr(0xFEFF)                     # (so Excel opens the CSV as UTF-8)
+
+
+def _csv_cell(v):
+    """A CSV cell as Python's csv module writes it (quoted when it holds a comma, a quote or a line break)."""
+    v = "" if v is None else str(v)
+    return '"' + v.replace('"', '""') + '"' if re.search(r'[,"\r\n]', v) else v
+
+
 # ======================================================================== crops
 def upright(img, d):
     """A crop of text written along direction d (image x right, y down) turned so the text reads left to right, as on
@@ -405,20 +494,30 @@ class Finder:
         objs = self.objects()
         import band_table
         named = CURVE_ID.search(q) and not re.search(r"\bcurves?\b", ql) and not band_table.asks_row(q)
-        if (re.search(r"\bcurves?\b", ql) or named) and (objs.curves or not objs.bridges):
+        cid = CURVE_ID.search(q)
+        has_block = bool(cid and objs.curve_blocks(cid.group(1).upper()))      # "CURVE No. 207" printed here
+        if (re.search(r"\bcurves?\b", ql) or named) and (objs.curves or has_block or not objs.bridges):
             return self.curve_answer(q)                     # "curve no. 8", "C-8", "C. NO. - 17U", "C-8 TPCC2"
         bridge_q = re.search(r"\bbr(?:idge)?s?\b|\bbr\.|\b\d{1,4}a?(?:up|dn)\b", ql)      # (also a bare "224UP")
         if not bridge_q or not objs.bridges:
             return None
-        import band_table
-        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
+        nums = bridge_nums(q)
+        if wants_card(q, nums):                             # "details about bridge 224, 225" / "... in csv": the template
+            return self.bridge_csv(nums)
         if not nums:
             if re.search(r"\b(list|all|how many|which|what|show|every|count)\b", ql):
                 return self.list_bridges(q)
             return None
-        levels = re.search(r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?)\b", ql)
-        if band_table.asks_row(q) and not levels or re.search(r"ground|\bogl\b|\bgl\b|cut|fill|rail|\brl\b|track|differ", ql):
-            return None                                     # a band value at the bridge: the band reader answers
+        # a band value at the bridge (ground level, cut / fill, track distance, a difference): the band reader. A level
+        # printed in the bridge's own level block (FL / RL / HFL / BL / HC / VC, "RL 4TH LINE") is answered from it
+        if re.search(r"ground|\bogl\b|\bgl\b|\bcut\b|\bfill\b|track\s*(?:dist|cent)|differ", ql):
+            return None
+        levels = re.search(self.LEVEL_Q, ql)
+        if band_table.asks_row(q) and not levels:
+            return None
+        if re.search(r"\brail\b|\br\.?l\b", ql) and not any(re.search(r"\bR\.?\s*L\b", sheet_objects_text(b.levels[0]), re.I)
+                                                        for n in nums for b in objs.find_bridges(num=n) if b.levels):
+            return None                                     # no rail level in the bridge's block: the band's rail level
         return self.bridge_answer(q, nums)
 
     @staticmethod
@@ -454,6 +553,78 @@ class Finder:
         name = Path(getattr(self.s, "pdf", None) or self.s.path).stem
         return export_bridges(rows, self.out.parent / f"{name}_bridges.json", q, self)
 
+    def bridge_cards(self, nums):
+        """[(card, got, want)] for the bridges asked for (every bridge on the sheet when none is named), in chainage
+        order - each read by the model from its own callout and level block (bridge_list.bridge_row)."""
+        import bridge_card
+        import bridge_list
+        groups = bridge_list.groups_of(self.objects())
+        if nums:
+            groups = {n: bs for n, bs in groups.items()
+                      if any(n == x or re.fullmatch(re.escape(x) + r"(UP|DN)", n) for x in nums)}
+        out = []
+        for num, bs in groups.items():
+            got, want, lv_read, lv_pdf = bridge_list.bridge_row(self, num, bs)
+            deg, note = self.curve_degree(bridge_list.chainage_value(want["chainage"]), num)
+            notes = [note] if note else []
+            # the card's own level cells, checked like the rest: HFL (the highest flood level) and the rail levels
+            for what, f in (("HFL", bridge_card.hfl_max), ("rail level", bridge_card.rail_levels)):
+                r, p_ = f(lv_read), f(lv_pdf)
+                if r != p_:
+                    notes.append(f"{num} · {what}: read {r!r}, the PDF says {p_!r}")
+            if notes:
+                got["_degree_check"] = "; ".join(notes)
+            out.append((bridge_card.card(got, lv_read, deg), got, want))
+        out.sort(key=lambda t: bridge_list.chainage_value(t[2]["chainage"]))
+        return out
+
+    def curve_degree(self, ch, num):
+        """((existing, proposed) degree of curve, check note) at chainage ch: the degree of the curve whose start and
+        end chainages hold ch, read by the model from that curve's block - per status when both are printed, else the
+        one curve for both columns; ("", "") off every curve."""
+        import sheet_objects
+        if ch == float("inf"):
+            return ("", ""), ""
+        objs = self.objects()
+        # every curve whose start and end chainages hold ch; two lines' curves at one place ("4TH LINE" and "3RD LINE"):
+        # the sheet's own line first
+        main = objs.main_track
+        found = {}
+        for c in objs.curves:
+            if c.points and c.span[0] <= ch <= c.span[1]:
+                found.setdefault(c.status, []).append(c)
+        for cs in found.values():
+            cs.sort(key=lambda c: (c.track is not None and c.track != main))
+        got, notes = {}, []
+        for st, cs in found.items():
+            for c in cs:
+                printed, parts = objs.degree(c)
+                if printed is None:
+                    continue
+                read, _ = self.read_parts(parts, f"cvd_{c.block_num or c.num}")
+                m = sheet_objects.DEGREE.search(read)
+                val = m.group(1) if m else None
+                if val is None or float(val) != float(printed):
+                    notes.append(f"{num} · degree of curve ({c.name}): read {val!r}, the PDF says {printed!r}")
+                got[st] = val or ""
+                break
+        ex, pr = got.get("existing"), got.get("proposed")
+        one = ex or pr or ""
+        return (ex if ex is not None else one, pr if pr is not None else one), "; ".join(notes)
+
+    def bridge_csv(self, nums, where=""):
+        """The bridge(s) in the RAILWAY_RCC_BOX_TEMPLATE layout as a CSV (bridge_card.py); the answer shows the filled
+        rows and every value the model read differently from the PDF text."""
+        cards = self.bridge_cards(nums)
+        if not cards:
+            there = ", ".join(sorted(b.name for b in self.objects().bridges)) or "none"
+            return (f"No bridge {', '.join(nums)} is printed on this sheet (bridges here: {there}; nothing is guessed)."
+                    + "".join(self.on_other_pages(n) for n in nums)) if nums else "No bridge callouts are printed on this sheet."
+        name = Path(getattr(self.s, "pdf", None) or self.s.path).stem
+        text = export_cards([(c, g, w, where) for c, g, w in cards], self.out.parent / "exports", name, self)
+        missing = not_found(nums, [w for _, _, w in cards])
+        return text + (f"\nNot printed on this sheet (so not in the file; nothing is guessed): {', '.join(missing)}" if missing else "")
+
     def bridges_asked(self, q):
         """([Bridge], description): the bridges a list question asks for (by status and type)."""
         ql = q.lower()
@@ -477,7 +648,7 @@ class Finder:
         st = self.asked_status(ql)
         want = {k for k, pat in (("chainage", r"chainage|\bch\b|where|locat|position"), ("span", r"\bspan|opening|size"),
                                  ("type", r"\btype|kind|structure|proposal"),
-                                 ("levels", r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?)\b")) if re.search(pat, ql)}
+                                 ("levels", self.LEVEL_Q)) if re.search(pat, ql)}
         out = []
         for num in dict.fromkeys(nums):
             bs = self.objects().find_bridges(num=num, status=st)
@@ -512,11 +683,25 @@ class Finder:
                 out.append(self.level_answer(blocks[0], f"brlv_{num}", f"Br. No. {num}", ql, st))
         return "\n\n".join(out)
 
+    def read_block(self, parts, what):
+        """A level block as the model read it. A line whose "label = value" the reading left out (a tall block of ten
+        lines: one can be skipped - "FL DN LINE: ? (not read)") is read again from a crop of that line alone, and added."""
+        import sheet_objects
+        read, lab = self.read_parts(parts, what)
+        key = lambda k: re.sub(r"[^A-Z0-9]", "", re.sub(r"^(?:UP|DN)\s+(?=\S)", "", k.strip(), flags=re.I).upper())
+        have = {key(k) for k, _ in sheet_objects.BLOCK_KV.findall(read)}
+        extra = []
+        for n, p in enumerate(parts):
+            if any(key(k) not in have for k, _ in sheet_objects.BLOCK_KV.findall(p.text)):
+                r, _ = self.read_parts([p], f"{what}_l{n}")
+                extra.append(r)
+        return (" ".join([read] + extra), lab) if extra else (read, lab)
+
     def level_answer(self, block, what, name, ql, st):
         """The values of a level block the question asks for, as the model read them, each checked against the PDF text.
         Labels as printed: FL / EXG FL / PROP. FL / FL UP LINE / FL 3RD LINE, RL ..., BED LEVEL, OHFL, ROAD LEVEL, HC, VC."""
         import sheet_objects
-        read, lab = self.read_parts(block, what)
+        read, lab = self.read_block(block, what)
         # a bridge number's own UP / DN ("BR. NO. 575 UP" / "EXG FL = ...") is not part of the first label
         strip = lambda pairs: {re.sub(r"^(?:UP|DN)\s+(?=\S)", "", k.strip(), flags=re.I): v for k, v in pairs}
         got = strip(sheet_objects.BLOCK_KV.findall(read))
@@ -564,7 +749,7 @@ class Finder:
             lines = [f"  (none of the values asked for is printed in it; it gives: {', '.join(k.strip() for k in true) or 'nothing'})"]
         return f"{name} level block (read by the model):\n" + "\n".join(lines)
 
-    LEVEL_Q = r"\b(h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?|r\.?l|h\.?c|v\.?c|clearance|road\s*level)\b"
+    LEVEL_Q = r"\b([oc]?\.?h\.?f\.?l|b\.?l|bed|f\.?l|formation|levels?|r\.?l|rail\s*level|h\.?c|v\.?c|clearance|road\s*level)\b"
 
     def crossing_answer(self, q):
         """Levels and clearances of a level crossing / ROB / RUB ("HC and VC of LC 123", "FL at LC-117"); None otherwise."""
@@ -586,11 +771,13 @@ class Finder:
         """'Which curve is near Br. No. 15' / 'curve at CH 11384' / 'details of curve 8'."""
         ql = q.lower()
         objs = self.objects()
-        if not objs.curves:
-            return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
         cnum = CURVE_ID.search(q)
+        if not objs.curves:
+            if cnum and objs.curve_blocks(cnum.group(1).upper()):
+                return self.curve_details(cnum.group(1).upper())          # only its "CURVE No." block is on this sheet
+            return "No curve points (TPTC / TPCC ...) are printed on this sheet, so I cannot answer that from it."
         places = []
-        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
+        nums = bridge_nums(q)
         if nums:
             st = self.asked_status(ql)
             for b in (b for n in nums for b in objs.find_bridges(num=n, status=st)):
@@ -690,9 +877,9 @@ class Finder:
         """The bridges on a curve (which part of it each is on), else the nearest bridge before and after it. Every
         chainage in the answer is read by the model (the curve's points and each bridge's callout)."""
         objs = self.objects()
-        cs = curves or [c for c in objs.curves if c.num == num]
+        cs = curves or objs.find_curves(num)
         if not cs:
-            have = ", ".join(dict.fromkeys(c.num for c in objs.curves))
+            have = ", ".join(dict.fromkeys(c.block_num or c.num for c in objs.curves))
             return f"No curve {num} is printed on this sheet (curves here: {have}; nothing is guessed)."
         if not objs.bridges:
             return "No bridge callouts are printed on this sheet, so I cannot answer that from it."
@@ -738,10 +925,19 @@ class Finder:
     def curve_details(self, num, point=None):
         """A curve: where it starts and ends, its circular part, every point as the model read it, its details. With
         point ("TPCC2"), that point first."""
-        cs = [c for c in self.objects().curves if c.num == num]
+        import sheet_objects
+        objs = self.objects()
+        cs = objs.find_curves(num)
         if not cs:
-            have = ", ".join(dict.fromkeys(c.num for c in self.objects().curves))
-            return f"No curve {num} is printed on this sheet (curves here: {have}; nothing is guessed)."
+            blocks = objs.curve_blocks(num)
+            if blocks:                    # its "CURVE No." block only (its points are on another sheet, or not matched)
+                read, lab = self.read_parts(blocks[0], f"cvd_{num}")
+                m = sheet_objects.DEGREE.search(read)
+                return (f"curve {num}: only its details block is on this sheet (its start / end chainages are not)\n"
+                        + (f"  degree of curve: {m.group(1)}\n" if m else "")
+                        + f"  details (read by the model): {read}" + self.same_numbers(read, lab.text))
+            have = ", ".join(dict.fromkeys(c.block_num or c.num for c in objs.curves))
+            return f"No curve {num} is printed on this sheet (curves here: {have or 'none'}; nothing is guessed)."
         out = []
         for c in cs:
             pts = sorted(c.points, key=lambda p: c.points[p][0])
@@ -765,6 +961,10 @@ class Finder:
                 lines.append(f"  its circular part runs from CH {fmt(v[c1])} ({c1}) to CH {fmt(v[c2])} ({c2})")
             lines.append("  points (each read by the model): " + "; ".join(reads[p][1] for p in pts))
             if c.details:
+                read, _ = self.read_parts(c.details[0], f"cvd_{c.num}")
+                m = sheet_objects.DEGREE.search(read)
+                if m:
+                    lines.insert(1, f"  degree of curve: {m.group(1)}")
                 lines.append("  " + self.curve_summary(c))
             out.append("\n".join(lines))
         return "\n\n".join(out)
@@ -787,7 +987,7 @@ class Finder:
         chainage printed in the label it names ("cut/fill at C-8 TPCC2" -> "C-8. TPCC2 AT Ch. 11701.654m."). Labels
         tying for the best match each count ("BR NO. 15" -> the EX. and the PROP. bridge, at their own chainages)."""
         # a bridge named in the question: the chainage printed in its callout (all its lines joined)
-        nums = [re.sub(r"\s+", "", n).upper() for n in BRIDGE_REF.findall(q)]
+        nums = bridge_nums(q)
         if nums and self.objects().bridges:
             import sheet_objects
             out = []

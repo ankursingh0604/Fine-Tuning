@@ -151,7 +151,12 @@ class Docs:
         out = {"answer": text, "pages": pages, "seconds": round(seconds, 1),
                "crops": [{"url": f"/api/doc/{doc}/file?path={p.relative_to(book.out).as_posix()}", "caption": caption(p)}
                          for p in crops]}
-        if export:                       # the bridge list: a JSON file to download, the answer says what is in it
+        if export and export.get("kind") == "card":      # one bridge (or more) in the template layout: a CSV to download
+            rel = export["csv"].relative_to(book.out).as_posix()
+            out["file"] = {"kind": "card", "name": export["csv"].name, "url": f"/api/doc/{doc}/file?path={rel}&download=1",
+                           "csv_name": export["csv"].name, "csv_url": f"/api/doc/{doc}/file?path={rel}&download=1",
+                           "count": len(export["rows"]), "issues": export["issues"], "json": export["preview"]}
+        elif export:                     # the bridge list: a JSON file to download, the answer says what is in it
             import bridge_list
             rel = export["path"].relative_to(book.out).as_posix()
             rel_csv = export["csv"].relative_to(book.out).as_posix()

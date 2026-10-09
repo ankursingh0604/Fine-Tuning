@@ -193,6 +193,42 @@ def same(a, b):
     return n(a) == n(b)
 
 
+def groups_of(objs):
+    """{bridge number: [its callouts]} (an EX. and a PROP. callout of one bridge share a number)."""
+    groups = {}
+    for b in objs.bridges:
+        groups.setdefault(b.num, []).append(b)
+    return groups
+
+
+def bridge_row(finder, num, bs):
+    """(row as read, row from the PDF text, level block as read, level block's PDF text) for one bridge's callouts."""
+    import sheet_objects
+
+    def read(parts, what):
+        return finder.read_parts(parts, what)[0] if parts else ""
+    pdf_text = lambda b: sheet_objects.joined(b.best()).text
+    paired = all(sheet_objects.SPAN.search(pdf_text(b)) for b in bs)
+    lv = next((b.levels[0] for b in bs if b.levels), None)
+    if paired:                                       # EX. and PROP. callouts
+        ex = next((b for b in bs if b.status == "existing"), None)
+        pr = next((b for b in bs if b.status == "proposed"), None)
+        got = parse_pair(read(ex.best(), f"br_{ex.name}") if ex else None,
+                         read(pr.best(), f"br_{pr.name}") if pr else None, num)
+        want = parse_pair(pdf_text(ex) if ex else None, pdf_text(pr) if pr else None, num)
+    else:                                            # one callout per bridge
+        b = bs[0]
+        want = parse_callout(pdf_text(b))
+        got = parse_callout(read(b.best(), f"br_{b.name}"), hint=want["br_no"])
+        got["br_no"] = got["br_no"] or want["br_no"]
+    lv_read = lv_pdf = ""
+    if lv:
+        lv_read, lv_pdf = finder.read_block(lv, f"brlv_{num}")[0], sheet_objects.joined(lv).text
+        got.update(levels(lv_read))
+        want.update(levels(lv_pdf))
+    return got, want, lv_read, lv_pdf
+
+
 def rows(finder, q=""):
     """[(row, pdf_row)] for one sheet, in chainage order: row is each item as the model read it, pdf_row the same
     fields from the PDF text. Filters in q (existing / proposed, RCC, box, pipe, girder, slab, arch ...) narrow it."""
@@ -203,27 +239,8 @@ def rows(finder, q=""):
     def read(parts, what):
         return finder.read_parts(parts, what)[0] if parts else ""
 
-    groups = {}
-    for b in objs.bridges:
-        groups.setdefault(b.num, []).append(b)
-    for num, bs in groups.items():
-        pdf_text = lambda b: sheet_objects.joined(b.best()).text
-        paired = all(sheet_objects.SPAN.search(pdf_text(b)) for b in bs)
-        lv = bs[0].levels[0] if bs[0].levels else None
-        if paired:                                       # EX. and PROP. callouts
-            ex = next((b for b in bs if b.status == "existing"), None)
-            pr = next((b for b in bs if b.status == "proposed"), None)
-            got = parse_pair(read(ex.best(), f"br_{ex.name}") if ex else None,
-                             read(pr.best(), f"br_{pr.name}") if pr else None, num)
-            want = parse_pair(pdf_text(ex) if ex else None, pdf_text(pr) if pr else None, num)
-        else:                                            # one callout per bridge
-            b = bs[0]
-            want = parse_callout(pdf_text(b))
-            got = parse_callout(read(b.best(), f"br_{b.name}"), hint=want["br_no"])
-            got["br_no"] = got["br_no"] or want["br_no"]
-        if lv:
-            got.update(levels(read(lv, f"brlv_{num}")))
-            want.update(levels(sheet_objects.joined(lv).text))
+    for num, bs in groups_of(objs).items():
+        got, want, _, _ = bridge_row(finder, num, bs)
         out.append((got, want))
     for c in objs.crossings:
         want = parse_callout(sheet_objects.joined(c.best()).text)

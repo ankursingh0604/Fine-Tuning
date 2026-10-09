@@ -19,6 +19,7 @@ import find_crop as F
 HELP = """Things you can ask (each answered from the page that prints it)
 
   Bridges     list all bridges · list all RCC bridges · list existing pipe bridges
+              bridge 224 details in csv (the RCC box template layout) · all bridge details in csv
               existing bridge 320UP · chainage of existing bridge 16 · span of bridge 17 · FL of bridge 575
   Curves      curve 8 · which curve is near bridge 15 · which bridge is near curve 8 · curve near CH 12000
   Gradients   gradient at CH 11540
@@ -82,7 +83,7 @@ class Book:
         ql = q.lower()
         fs = self.finders
         everywhere = range(len(fs))
-        nums = [re.sub(r"\s+", "", n).upper() for n in F.BRIDGE_REF.findall(q)]
+        nums = F.bridge_nums(q)
         if nums:
             hit = [i for i in everywhere if any(fs[i].objects().find_bridges(num=n) for n in nums)]
             return hit, f"no bridge {', '.join(nums)} is printed {self.where}"
@@ -91,7 +92,7 @@ class Book:
         cid = F.CURVE_ID.search(q)
         if cid and (re.search(r"\bcurves?\b", ql) or not band_table.asks_row(q)):
             num = cid.group(1).upper()
-            hit = [i for i in everywhere if any(c.num == num for c in fs[i].objects().curves)]
+            hit = [i for i in everywhere if fs[i].objects().find_curves(num) or fs[i].objects().curve_blocks(num)]
             return hit, f"no curve {num} is printed {self.where}"
         # a chainage: the pages whose band covers it, else whose grade-point / chainage labels carry it
         chs = [ch for ch, w in fs[0].places(q) if w is None] if fs else []
@@ -170,7 +171,84 @@ class Book:
         return (f"{len(out)} {what + ' ' if what else ''}bridge(s) in this PDF ({len(self.finders)} pages), in page "
                 f"order (each callout read by the model from its own crop):\n" + "\n".join(out))
 
+    def curve_near_bridge(self, q):
+        """'Which curve is near bridge 264' over every page: the bridge's chainage from the page that prints it, the
+        curves from all pages (a bridge's page need not print the curve next to it)."""
+        out = []
+        for num in F.bridge_nums(q):
+            where = [(i, b) for i, f in enumerate(self.finders) for b in f.objects().find_bridges(num=num)]
+            if not where:
+                out.append(f"No bridge {num} is printed {self.where} (nothing is guessed).")
+                continue
+            i, b = where[0]
+            f = self.finders[i]
+            read, _ = f.read_parts(b.best(), f"br_{b.name}")
+            got, ok = f.check_fields(b, read, ("chainage",))
+            ch = got["chainage"]
+            if ch is None:
+                out.append(f"{b.name}: its chainage could not be read (\"{read}\"), so the curve near it cannot be found.")
+                continue
+            # every curve of every page with its distance from the bridge; the nearest first and, at the same distance
+            # (two lines curving at one place: "4TH LINE" and "3RD LINE"), the sheet's own line first
+            main = f.objects().main_track
+            near, seen = [], set()
+            for k, g in enumerate(self.finders):
+                for st, found in g.objects().curves_near(ch).items():
+                    for d, c in found:
+                        key = (c.block_num or c.num, c.track, round(c.span[0], 3))
+                        if key not in seen:
+                            seen.add(key)
+                            near.append((d, c.track is not None and c.track != main, k, c))
+            near.sort(key=lambda t: (t[0], t[1]))
+            head = f"[page {i + 1}] {b.name} at CH {F.fmt(ch)}{ok}:"
+            if not near:
+                out.append(f"{head}\n  no curve is printed {self.where}.")
+                continue
+            lines = []
+            for d, _, k, c in near[:1] + [t for t in near[1:] if t[0] == 0 and near[0][0] == 0]:
+                g = self.finders[k]
+                deg, _ = g.objects().degree(c)
+                line = g.curve_position(c, ch, d) + (f" [page {k + 1}]" if k != i else "")
+                if deg:
+                    line += f"; degree of curve {deg}" + (" (the bridge is on this curve)" if d == 0 else "")
+                lines.append(("" if not lines else "also ") + line)
+            out.append(head + "".join(f"\n  {x}" for x in lines))
+        return "\n\n".join(out)
+
+    def bridge_csv(self, q):
+        """'Bridge 224 details in csv' over every page: the bridge(s) in the RCC box template layout (bridge_card.py),
+        a bridge printed again at the start of the next sheet once; every bridge in the PDF when none is named."""
+        import bridge_list
+        nums = F.bridge_nums(q)
+        items = []
+        for i, f in enumerate(self.finders):
+            if nums and not any(f.objects().find_bridges(num=n) for n in nums):
+                continue
+            for c, g, w in f.bridge_cards(nums):
+                # the same bridge printed on two pages (once without its chainage): one card, the fuller reading
+                no = re.sub(r"\s", "", (w["br_no"] or "").upper())
+                same = next((k for k, it in enumerate(items) if re.sub(r"\s", "", (it[2]["br_no"] or "").upper()) == no
+                             and (not w["chainage"] or not it[2]["chainage"] or w["chainage"] == it[2]["chainage"])), None)
+                full = lambda row: sum(v is not None for v in row.values())
+                item = (c, g, w, f"page {i + 1} · " if len(self.finders) > 1 else "")
+                if same is None:
+                    items.append(item)
+                elif full(w) > full(items[same][2]):
+                    items[same] = item
+        if not items:
+            return f"No bridge {', '.join(nums)} is printed {self.where} (nothing is guessed)." if nums else \
+                f"No bridge callouts are printed {self.where}."
+        items.sort(key=lambda t: bridge_list.chainage_value(t[2]["chainage"]))
+        name = Path(getattr(self, "display_name", self.path.name)).stem
+        text = F.export_cards(items, self.out / "exports", name, self)
+        missing = F.not_found(nums, [w for _, _, w, _ in items])
+        return text + (f"\nNot printed {self.where} (so not in the file; nothing is guessed): {', '.join(missing)}" if missing else "")
+
     def answer(self, q):
+        if F.wants_card(q, F.bridge_nums(q)) and re.search(r"\bbr(?:idge)?s?\b|\bbr\.|\b\d{1,4}a?(?:up|dn)\b", q.lower()):
+            return self.bridge_csv(q)
+        if re.search(r"\bcurves?\b", q, re.I) and F.bridge_nums(q):
+            return self.curve_near_bridge(q)                # "which curve is near bridge 264": the curves of every page
         if self.is_list(q):
             return self.list_bridges(q)
         pages, why = self.pages_for(q)

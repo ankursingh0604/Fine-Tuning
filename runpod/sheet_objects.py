@@ -36,7 +36,17 @@ CURVE_PT = re.compile(r"^\W*(?P<ex>EX(?:G|IST(?:ING)?)?\.?\s*)?C\.?\s*(?:NO\.?)?
                       r"(?P<pt>TPTC|TPCC|TC|CT|CC|TS|SC|CS|ST)\s*-?\s*(?P<n>\d)?\b.*?\bCH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
 CURVE_HEAD = re.compile(r"^\W*(?P<ex>EX(?:G)?\.?\s*)?C\.?\s*NO\.?\s*[-.]?\s*(?P<id>\d+[A-Z]*)\s*\((?P<hand>[LR])\w*\)\s*(?:\((?P<line>UP|DN)\))?"
                         r"\s*(?P<line2>UP|DN)?\W*$", re.I)
-CURVE_LINE = re.compile(r"^\W*(?:Δ|∆|DELTA|R|TL|CL|TRL|SHIFT|CA|CD|MSP|V|LS|L)\s*[:=]", re.I)
+CURVE_LINE = re.compile(r"^\W*(?:Δ|∆|DELTA|R|TL|CL|TRL|TTL|CCL|SHIFT|CA|CD|MSP|V\s*MAX|VMAX|V|LS|L|DEG(?:REE)?\.?(?:\s*OF\s*CURVE)?)\s*[:=]",
+                        re.I)
+# a curve's detail block headed by its number in words: "CURVE No. 248" / Degree / Δ / R / TTL / CCL / (RH)
+CURVE_BLOCK_HEAD = re.compile(r"^\W*CURVE\s*NO\.?\s*[-.:]?\s*(?P<id>\d+[A-Z]*)\b", re.I)
+# curve points named TP1 / J1 / J2 / TP2 (tangent point, junction of transition and circle): "TP1 CH: 984+866.053",
+# "J2 AT CH: 985686.053" - the start, the circular part's start and end, the end (as ST / TC / CT / TS)
+TPJ = re.compile(r"\b(?P<pt>TP\s*[12]|J\s*[12])\s*(?:AT\s*)?CH\.?\s*[:.]?\s*(?P<ch>\d+(?:\s*\+\s*\d+)?(?:\.\d+)?)", re.I)
+TPJ_AS = {"TP1": "ST1", "J1": "TC", "J2": "CT", "TP2": "TS2"}
+TRACK = re.compile(r"\b(?:\d\s*(?:ST|ND|RD|TH)|UP|DN|DOWN)\s*LINE\b", re.I)
+DEGREE = re.compile(r"\bDEG(?:REE)?\.?(?:\s*OF\s*CURVE)?\s*[:=]\s*(\d+(?:\.\d+)?)", re.I)
+CCL_RE = re.compile(r"\bCCL\s*[:=]\s*(\d+(?:\.\d+)?)", re.I)
 CROSS_HEAD = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?\s*(?:BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*)?"
                         r"(?P<label>(?P<kind>LC|ROB|RUB|FOB)\b\s*[-.]?\s*(?P<num>\d+[A-Z]*)?(?:\s*\([^)]*\))?)", re.I)
 # every "label = value" of a level block, whatever the label: "FL = ...", "EXG FL = ...", "FL 3RD LINE = ...",
@@ -131,6 +141,8 @@ class Curve:
         self.points = {}          # "TPTC1" -> (chainage, Word)
         self.details = []         # [[Word, ...]] detail blocks (head + Δ / R / TL / CL / Ca / Cd / MSP lines)
         self.hand = None
+        self.block_num = None     # the number of a "CURVE No. 248" block found for an unnumbered curve
+        self.track = None         # the line it is on, when its block names it ("4TH LINE")
 
     @property
     def span(self):
@@ -139,7 +151,9 @@ class Curve:
 
     @property
     def name(self):
-        return f"{'existing ' if self.status == 'existing' else ''}curve {self.num}" + (f" ({self.line} main)" if self.line else "")
+        num = f"{self.block_num} ({self.num})" if self.block_num else self.num
+        return (f"{'existing ' if self.status == 'existing' else ''}curve {num}" + (f" ({self.line} main)" if self.line else "")
+                + (f" ({self.track})" if self.track else ""))
 
 
 class SheetObjects:
@@ -308,7 +322,104 @@ class SheetObjects:
                 if c.num == num and (line is None or c.line in (None, line)):
                     c.details.append(parts)
                     c.hand = c.hand or m.group("hand").upper()
+        self._tpj_curves(by)
+        self._blocks(by)
         self.curves = sorted(by.values(), key=lambda c: c.span)
+
+    def _tpj_curves(self, by):
+        """Curves printed as one block in the plan: the track above it ("4TH LINE"), "CURVE No. 206", Degree, Δ, R, TL,
+        then TP1 / J1 / J2 / TP2 with their chainages, TRL, CCL. Each is a curve of that number and track, its points
+        from the block (the same block printed again is one curve)."""
+        ok = lambda t: bool(CURVE_LINE.match(t) or TPJ.match(t.strip()) or re.match(r"^\W*PROPOSED\s+SPEED", t, re.I))
+        for w in self.words:
+            m = CURVE_BLOCK_HEAD.match(w.text)
+            if not m:
+                continue
+            parts = self.lines_from(w, ok, lambda t: False, 16)
+            pts = {}
+            for p in parts:
+                t = TPJ.match(p.text.strip())
+                if t:
+                    ch = t.group("ch").replace(" ", "")
+                    v = (int(ch.split("+")[0]) * 1000 + float(ch.split("+")[1])) if "+" in ch else float(ch)
+                    pts[TPJ_AS[re.sub(r"\s", "", t.group("pt")).upper()]] = (v, p)
+            if not ("ST1" in pts and "TS2" in pts):
+                continue
+            num = m.group("id").upper()
+            above = [o for o in self.words if TRACK.search(o.text) and abs(o.c[0] - w.c[0]) < 6 * w.h and 0 < w.c[1] - o.c[1] < 3 * w.h]
+            track = TRACK.search(min(above, key=lambda o: w.c[1] - o.c[1]).text).group().upper() if above else None
+            key = ("@blk" + num, "proposed", track)
+            if key in by:
+                continue
+            c = Curve(num, "proposed", None)
+            c.points, c.track = pts, track
+            c.details.append(parts)
+            by[key] = c
+
+    @property
+    def main_track(self):
+        """The sheet's own proposed line ("4TH LINE"): the one its band rows name most ("PROP. 4TH LINE FL")."""
+        from collections import Counter
+        n = Counter(re.sub(r"\s", "", m.group(1)).upper() for w in self.words
+                    for m in [re.search(r"PROP\.?\s*(\d\s*(?:ST|ND|RD|TH))\s*LINE", w.text, re.I)] if m)
+        return f"{n.most_common(1)[0][0]} LINE" if n else None
+
+    def _blocks(self, by):
+        """Detail blocks headed "CURVE No. 248" (Degree / Δ / R / TTL / CCL): to the curve of that number, else to the
+        curve its CCL (circular length) is - the CT chainage minus the TC chainage printed for that curve - and, when two
+        curves have that length, the one at the block's place along the sheet. A block that fits no curve is left out."""
+        for w in self.words:
+            m = CURVE_BLOCK_HEAD.match(w.text)
+            if not m:
+                continue
+            parts = self.lines_from(w, lambda t: bool(CURVE_LINE.match(t)), lambda t: False, 12)
+            if len(parts) < 2:
+                continue
+            num = m.group("id").upper()
+            named = [c for c in by.values() if c.num == num]
+            if named:
+                for c in named:
+                    c.details.append(parts)
+                continue
+            ccl = CCL_RE.search(joined(parts).text)
+            if not ccl:
+                continue
+
+            def circ(c):
+                a = next((c.points[p][0] for p in ("TC", "SC", "TPCC1") if p in c.points), None)
+                b = next((c.points[p][0] for p in ("CT", "CS", "TPCC2") if p in c.points), None)
+                return None if a is None or b is None else b - a
+            fit = [c for c in by.values() if circ(c) is not None and abs(circ(c) - float(ccl.group(1))) < 0.02]
+            if len(fit) > 1:                          # the same length twice: the one nearest the block along the sheet
+                along = lambda c: min(abs(pw.c[0] - w.c[0]) for _, pw in c.points.values())
+                fit = [min(fit, key=along)]
+            for c in fit:
+                c.details.append(parts)
+                c.block_num = num
+
+    def find_curves(self, num):
+        """The curves numbered num: by their points' number, or by the "CURVE No." block found for them."""
+        num = (num or "").upper()
+        return [c for c in self.curves if (c.num or "").upper() == num or (c.block_num or "").upper() == num]
+
+    def curve_blocks(self, num):
+        """Every "CURVE No. <num>" detail block on the sheet ([[Word]]), whether or not its curve's points are on it."""
+        out = []
+        for w in self.words:
+            m = CURVE_BLOCK_HEAD.match(w.text)
+            if m and m.group("id").upper() == (num or "").upper():
+                parts = self.lines_from(w, lambda t: bool(CURVE_LINE.match(t)), lambda t: False, 12)
+                if len(parts) >= 2:
+                    out.append(parts)
+        return out
+
+    def degree(self, c):
+        """(degree as printed, the block it is in) of a curve, or (None, None) - from its detail block."""
+        for parts in c.details:
+            m = DEGREE.search(joined(parts).text)
+            if m:
+                return m.group(1), parts
+        return None, None
 
     def _unnumbered(self, by):
         """Curve points printed without a curve number ("ST AT CH: 1245512.852", "TC AT CH: ...", "CT AT CH: ...") are

@@ -536,7 +536,19 @@ function exportCard(f) {                                   // the bridge list as
       <div class="acts"><button class="peek">Preview</button>
       <a class="dl xl" download title="Download for Excel"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/></svg>Excel CSV</a>
       <a class="dl js" download title="Download the JSON"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>JSON</a></div></div><pre></pre>`;
-  c.querySelector("b").textContent = f.name.replace(/\.json$/i, "");
+  c.querySelector("b").textContent = f.name.replace(/\.(json|csv)$/i, "");
+  if (f.kind === "card") {                                 // the template-layout CSV: one download, a plain preview
+    const zip = /\.zip$/i.test(f.name);                    // several bridges: one CSV each, zipped
+    c.querySelector(".jf").textContent = zip ? "ZIP" : "CSV";
+    if (zip) c.querySelector("a.xl").lastChild.textContent = "CSVs (zip)";
+    c.querySelector("a.js").remove();
+    c.querySelector("a.xl").href = f.csv_url;
+    c.querySelector(".meta span").textContent = `${plural(f.count, "bridge")} · ${f.issues.length ? plural(f.issues.length, "value") + " to check" : "all values match the PDF"}`;
+    c.querySelector("pre").textContent = f.json;
+    const peek = c.querySelector(".peek");
+    peek.onclick = () => { c.classList.toggle("open"); peek.textContent = c.classList.contains("open") ? "Hide" : "Preview"; };
+    return c;
+  }
   c.querySelector(".meta span").textContent = `${plural(f.count, "item")} · ${f.issues.length ? plural(f.issues.length, "value") + " to check" : "all values match the PDF"}`;
   c.querySelector("a.js").href = f.url;
   const xl = c.querySelector("a.xl");
