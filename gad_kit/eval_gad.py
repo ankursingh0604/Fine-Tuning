@@ -25,7 +25,7 @@ import data_gad as DG      # noqa: E402
 NUM = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
 
 
-def generate(model, processor, msgs, images, max_new=450):
+def generate(model, processor, msgs, images, max_new=800):   # (the longest test answers are ~610 tokens)
     import torch
     text = DG.render(processor, msgs, add_generation_prompt=True)
     inputs = processor(text=[text], images=images or None, return_tensors="pt").to(model.device)
@@ -98,9 +98,32 @@ def score(row, pred):
             ok = got >= 0.8 * max(1, len(parts))
             return ok, "" if ok else f"named {got}/{len(parts)} parts", got / max(1, len(parts))
         return ok, "" if ok else "component not named", float(ok)
-    if task == "qa_reason":                                    # the same verdict as the reference, and its numbers
+    if task == "qa_other":                                     # the same meaning case: known / web fits / web off-topic / unknown
+        def case(t):
+            if re.search(r"does not fit|doesn't fit", t, re.I):
+                return "web off-topic"
+            if re.search(r"web search found nothing|can't say what it denotes|cannot say what it denotes|meaning is not known", t, re.I):
+                return "unknown"
+            if re.search(r"web search|from the web|found on the web", t, re.I):
+                return "web fits"
+            return "known"
+        if case(ref) != case(pred):
+            return False, f"meaning case {case(pred)} (reference: {case(ref)})", 0.0
+    if task == "qa_callout":                                   # where it is written: the same views, and "not on that view" when so
+        neg = lambda t: bool(re.search(r"\bis not written on\b|\bnot (?:shown|written) on\b|\bnot on the\b", t, re.I))
+        if neg(ref) != neg(pred):
+            return False, "said it is on the view" if neg(ref) else "said it is not on the view", 0.0
+        m = re.search(r"(?:written on|it is on) the (.+?)(?: \(drawn|\.|$)", ref.split(";")[-1] if neg(ref) else ref)
+        if m and not all(v.strip().lower() in pred.lower() for v in m.group(1).split(", ")[:2]):
+            return False, "view not named", 0.0
+    if task == "qa_cl" and "no value of its own" in ref and not re.search(r"no value|not a value|reference line", pred, re.I):
+        return False, "gave a centre line a value", 0.0
+    if task in ("qa_reason", "qa_reason_flag"):                # the same verdict as the reference, and its numbers
         def verdict(t):
-            return "flag" if re.search(r"\bNOT\b|worth checking|needs checking|less than \d", t) else "agree"
+            # a flag in any wording: "NOT what the note asks", "worth checking", "a different grade", "does not follow" ...
+            return "flag" if re.search(r"\bNOT\b|\bnot\s+(?:what|agree|match|consistent|follow)|worth checking|needs? checking|"
+                                       r"less than \d|does not (?:agree|follow|match)|doesn't|\bdifferent\b|\bmismatch|"
+                                       r"\binconsistent\b|should be checked", t, re.I) else "agree"
         if verdict(ref) != verdict(pred):
             return False, f"verdict {verdict(pred)} (reference: {verdict(ref)})", 0.0
     want = {x for x in NUM.findall(ref) if len(x.replace(".", "")) >= 2 or "." in x}

@@ -67,6 +67,8 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=8, help="effective batch = batch x grad-accum")
     ap.add_argument("--max-hours", type=float, default=0, help="stop training after this many hours, keeping the best "
                     "checkpoint (0 = no limit); the final test scoring comes after it")
+    ap.add_argument("--grad-ckpt", default="unsloth", choices=["unsloth", "gpu"],
+                    help="unsloth: activations parked in CPU RAM (12 GB card); gpu: recomputed on the GPU, no copies (80 GB card)")
     ap.add_argument("--workers", type=int, default=2, help="data-loading processes (RunPod: 8, so the GPU never waits)")
     ap.add_argument("--min-util", type=float, default=85, help="the smoke test flags GPU utilisation below this (%%)")
     ap.add_argument("--test-per-task", type=int, default=20, help="held-out rows scored per task at the end (0 = all)")
@@ -104,7 +106,8 @@ def main():
     from trl import SFTConfig, SFTTrainer
     from transformers import EarlyStoppingCallback, TrainerCallback
 
-    model, processor = FastVisionModel.from_pretrained(args.model, load_in_4bit=False, use_gradient_checkpointing="unsloth")
+    model, processor = FastVisionModel.from_pretrained(args.model, load_in_4bit=False,
+                                                         use_gradient_checkpointing="unsloth" if args.grad_ckpt == "unsloth" else True)
     log("model loaded", out)
     model = FastVisionModel.get_peft_model(
         model, finetune_vision_layers=True, finetune_language_layers=True, finetune_attention_modules=True,
@@ -121,11 +124,13 @@ def main():
             self.t0, self.s0 = time.time(), state.global_step
 
         def on_step_end(self, a, state, control, **kw):
+            if state.global_step - self.s0 == 10:               # speed from step 10 on: start-up and compiling left out
+                self.t0, self.s10 = time.time(), state.global_step
             if self.done or state.global_step - self.s0 < args.smoke_steps:
                 return
             self.done = True
             import torch
-            secs = (time.time() - self.t0) / max(1, state.global_step - self.s0)
+            secs = (time.time() - self.t0) / max(1, state.global_step - getattr(self, "s10", self.s0))
             left_h = secs * (steps - state.global_step) / 3600
             if args.max_hours and left_h > args.max_hours:
                 log(f"  the full {args.epochs} epochs would take {left_h:.1f} h: training stops at the {args.max_hours} h limit "
@@ -198,7 +203,8 @@ def main():
         train_dataset=DG.LazyRows(train_rows), eval_dataset=DG.LazyRows(val_rows),
         callbacks=[Smoke(), TimeLimit(), Progress(), EarlyStoppingCallback(early_stopping_patience=args.patience)],
         args=SFTConfig(
-            output_dir=str(out / "checkpoints"), per_device_train_batch_size=args.batch, per_device_eval_batch_size=args.batch,
+            output_dir=str(out / "checkpoints"), per_device_train_batch_size=args.batch, per_device_eval_batch_size=1,
+            dataloader_drop_last=True,   # (a short last batch broke Qwen3.5's position ids in validation at batch 8)
             gradient_accumulation_steps=args.grad_accum, num_train_epochs=args.epochs, max_steps=steps,
             learning_rate=args.lr, lr_scheduler_type="cosine", warmup_ratio=0.03, weight_decay=0.01, optim="adamw_8bit",
             bf16=is_bf16_supported(), fp16=not is_bf16_supported(), logging_steps=10,
@@ -209,6 +215,9 @@ def main():
             remove_unused_columns=False, dataset_text_field="", dataset_kwargs={"skip_prepare_dataset": True},
             max_length=max_len),
     )
+    if not args.resume:                    # a validation pass first: v1's first run crashed in validation after 20 min
+        m = trainer.evaluate(eval_dataset=DG.LazyRows(val_rows[:12]))
+        log(f"pre-flight validation on 12 rows works (eval_loss {m.get('eval_loss', float('nan')):.3f})", out)
     trainer.train(resume_from_checkpoint=True if args.resume else None)
     if (out / "SMOKE_FAILED").exists():
         log("stopped by the smoke test - see smoke_report.txt", out)

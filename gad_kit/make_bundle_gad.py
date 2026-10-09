@@ -34,7 +34,7 @@ def main():
         for p in KIT.iterdir():
             if p.suffix in (".py", ".sh", ".txt", ".json") and p.name != OUT.name:
                 z.write(p, f"gad_bundle/gad_kit/{p.name}", zipfile.ZIP_DEFLATED)
-        for name in ("annotate_gad.py", "gad_kinds.py", "facts.py"):
+        for name in ("annotate_gad.py", "gad_kinds.py", "facts.py", "image_page.py", "gad_vocab.txt", "glossary.py"):
             z.write(ROOT / "gad_tools" / name, f"gad_bundle/gad_tools/{name}", zipfile.ZIP_DEFLATED)
         for f in DS.glob("*.jsonl"):
             z.write(f, f"gad_bundle/gad_kit/dataset/{f.name}", zipfile.ZIP_DEFLATED)

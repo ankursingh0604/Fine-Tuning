@@ -1,13 +1,13 @@
 GAD (RCC BOX) MODEL ON RUNPOD - STEP BY STEP
-Qwen3.5-4B, 16-bit LoRA, 2 epochs (stops at 2.5 h keeping the best checkpoint), scored on 5 held-out GADs:
+Qwen3.5-4B, 16-bit LoRA, 2 epochs (stops at 3 h keeping the best checkpoint), scored on 5 held-out GADs:
 810-1 (single box), 823-2 (twin box), RUB-801-1 (RUB), 799-1 (DYCE format, slab), 752-3 (box on a curve).
 
 WHICH GPU
-  H100 80 GB SXM  - first choice: 2 epochs in about 1.5 h.
-  A100 80 GB SXM  - cheaper per hour: about 2.5 h (the 2.5 h limit may end it a little before 2 epochs; the best
+  H100 80 GB SXM  - first choice: 2 epochs in about 1.5-2 h (v2 rows are longer: crops of the asked spot + the facts).
+  A100 80 GB SXM  - cheaper per hour: about 3 h (the 3 h limit may end it a little before 2 epochs; the best
                     checkpoint is kept). Take SXM rather than PCIe. 48 GB cards (L40S, A6000) also fit but are slower.
-  Template: RunPod PyTorch (CUDA 12.x). Network volume 40 GB mounted at /workspace. Container disk 20 GB.
-  GPU use: batch 8 and 8 data-loading workers keep the GPU busy. The smoke test prints the GPU utilisation; below 85 %
+  Template: RunPod PyTorch (CUDA 12.x). Network volume 50 GB mounted at /workspace. Container disk 30 GB.
+  GPU use: batch 8 x 2 and 8 data-loading workers keep the GPU busy. The smoke test prints the GPU utilisation; below 85 %
   it says so and what to restart with. Watch it any time with: watch -n 10 nvidia-smi
 
 A. ON THE LAPTOP (already done; repeat only after changing the GADs or gad_tools)
@@ -24,7 +24,8 @@ B. ON THE POD (web terminal)
   7. tail -f /workspace/gad_run/progress.log
      - after 50 steps: SMOKE TEST - loss falling, speed, GPU utilisation, peak memory, hours left. "RESULT: PASS" -> it
        continues. Low GPU use: it prints the restart command (bigger --batch / more --workers).
-     - validation every ~10 %; the best checkpoint is kept; early stop when validation stops improving; time limit 2.5 h.
+     - validation every ~10 %; the best checkpoint is kept; early stop when validation stops improving; time limit 3 h.
+     - out of memory at the start? bash run_runpod.sh --batch 4 --grad-accum 4
      - pod restarted? bash run_runpod.sh --resume
   8. At the end ("ALL DONE", ~20 min after training for the test scoring):
        /workspace/gad_run/adapter.zip            the trained weights
@@ -34,9 +35,13 @@ B. ON THE POD (web terminal)
 C. YOUR OWN TEST (the 5 held-out GADs are in gad_bundle/test_gad/)
   9. source /workspace/venv_gad/bin/activate && export HF_HOME=/workspace/hf
      python ask_gad.py --adapter /workspace/gad_run/adapter --pdf "../test_gad/<a PDF>" -i
-     Ask: "Summarize this GAD", "Explain the toe wall", "Is the vertical clearance right?", "Check the founding
+     Ask: "Summarize this GAD", "What is 800 on the half bottom plan?", "Why is it to be dismantled?",
+     "What is the value of CL of existing up track?", "Which HFL is used and why?", "Explain the toe wall", "Is the vertical clearance right?", "Check the founding
      pressure against the SBC", "Is the concrete grade correct as per the notes?", "Which stations are on either side?",
      "What is the invert level at offset 40?" (RUB), "Are there any inconsistencies?". --show-facts shows what it was given.
+     Scanned GAD or a photo: give the PNG / JPG (or the scanned PDF) to --pdf. Its text is read with the local OCR
+     (a few minutes the first time, then cached next to the file); values read by OCR can be wrong, so the tool says
+     so - check what you use against the drawing. Sharing the GPU with another program: add --4bit (about 4 GB).
  10. A full scoring of all test rows (instead of 20 per question type): python eval_gad.py --adapter /workspace/gad_run/adapter --per-task 0
 
 D. ON THE RTX 3060 INSTEAD (12 GB, slower): bash setup_gad.sh, then bash run_gad.sh (batch 1 x 8, no time limit).

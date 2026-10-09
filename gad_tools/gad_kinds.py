@@ -54,10 +54,15 @@ VIEWS = [
 ]
 
 
+def loose(pat):
+    """A pattern with its spaces optional: OCR of a scanned sheet often loses them ("DETAILSOFDROPWALL")."""
+    return pat.replace(" ", "SPC").replace("SPC", r"\s*")
+
+
 def view_kind(title):
     t = re.sub(r"\s+", " ", title.upper())
     for pat, kind, what in VIEWS:
-        if re.search(pat, t):
+        if re.search(pat, t) or re.search(loose(pat), t):
             return kind, what
     return "other", "a view of the structure (see its title)."
 
@@ -67,7 +72,7 @@ LEVELS = [
     # (label pattern, kind, meaning) - first match wins, so the specific ones come first
     (r"\bSCOUR\b", "scour_level", "the lowest level the stream bed is expected to scour down to in a flood"),
     (r"\bRAIL\b", "rail_level", "the level of the top of the rail"),
-    (r"FORMATION|(?<!H\.)(?<!H)\bF\.?L\.?\b(?!.*WALL)", "formation_level",     # (not the F.L of "H.F.L.")
+    (r"FORMATION|\bP\.?F\.?L\.?\b|\bF\.?R\.?L\.?\b|(?<!H\.)(?<!H)\bF\.?L\.?\b(?!.*WALL)", "formation_level",     # (not the F.L of "H.F.L.")
      "the level of the top of the embankment (the formation) on which the ballast and track rest"),
     (r"TOP OF (THE )?(RCC )?(BOX|SLAB)|BOX TOP|TOP SLAB", "top_of_box_level", "the level of the top surface of the box's top slab"),
     (r"SOFFIT", "soffit_level", "the level of the underside of the top slab, i.e. the top of the clear opening"),
@@ -92,7 +97,7 @@ OF_ELEMENT = re.compile(r"\bOF\s+((?:RCC\s+)?BOX|R/?\s?WALL|RETURN WALL|FACE WAL
 def level_kind(label):
     t = re.sub(r"\s+", " ", label.upper())
     for pat, kind, meaning in LEVELS:
-        if re.search(pat, t):
+        if re.search(pat, t) or re.search(loose(pat), t):
             return kind, meaning
     return "reduced_level", LEVELS[-1][2]
 

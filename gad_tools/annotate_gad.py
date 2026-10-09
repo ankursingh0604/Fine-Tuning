@@ -21,6 +21,7 @@ The signature block (names of officials) is not read.
 """
 import argparse
 import json
+import math
 import re
 import sys
 from collections import Counter, defaultdict
@@ -73,7 +74,7 @@ def load_lines(page):
             text = re.sub(r"\s+", " ", " ".join(s["text"].strip() for s in spans)).strip()
             d = (int(round(l["dir"][0])), int(round(l["dir"][1])))
             lines.append({"text": text, "bbox": [round(v, 1) for v in l["bbox"]], "size": round(max(s["size"] for s in spans), 1),
-                          "dir": d})
+                          "dir": d, "color": spans[0]["color"]})
     for i, l in enumerate(lines):
         l["i"] = i
     return lines
@@ -149,7 +150,7 @@ def find_headings(lines):
             continue
         t = l["text"].strip().upper()
         for kind, pat in HEADINGS.items():
-            if re.match(pat, t):
+            if re.match(pat, t) or re.match(pat.replace(chr(92) + "s+", chr(92) + "s*"), t):     # (OCR: "TRACKDETAILS:")
                 hs.append({"kind": kind, "line": l})
                 break
     return hs
@@ -783,7 +784,8 @@ def read_levels(lines, views, exclude):
 def centre_lines(lines, views):
     out = []
     for l in lines:
-        m = re.match(r"^(?:C|℄|CL|C/L|C\.L\.?)\s+OF\s+(.+)$", l["text"].strip(), re.I)
+        # (the centre-line symbol is often drawn, not written: then the text is only "OF EXISTING UP TRACK")
+        m = re.match(r"^(?:(?:C|℄|CL|C/L|C\.L\.?)\s+)?OF\s+(.+)$", l["text"].strip(), re.I)
         if not m:
             continue
         name = re.sub(r"\s+", " ", m.group(1)).strip()
@@ -853,7 +855,43 @@ def read_dims(lines, views, cls, exclude):
         if DIM_NUM.match(t) and view and view["kind"] not in ("key_plan", "bore_log"):
             plain.append({"value": float(t), "unit": "mm", "direction": "horizontal" if l["dir"] == (1, 0) else "vertical" if l["dir"][0] == 0 else "inclined",
                           "view": vt, "bbox": l["bbox"], "line": l["i"]})
-    return labelled, plain, slopes
+    # a figure with its name written on the other side of its dimension line ("2648" over "BARREL LENGTH"): labelled
+    keep = []
+    for d in plain:
+        nm = _name_beside(d, lines, exclude)
+        if nm:
+            t = re.sub(r"\s+", " ", nm["text"]).strip()
+            kind, mean = "named", f"the {t.lower()} (the name written at this dimension)"
+            for pat, k, meaning in K.LABELLED_DIMS:
+                if k in ("barrel_length", "track_centres") and re.search(pat, f"{t} {d['value']:g}", re.I):
+                    kind, mean = k, meaning.format(what="item", between="the two tracks shown")
+            labelled.append({"label": f"{t} {d['value']:g}", "value": d["value"], "unit": "mm", "kind": kind, "what": None, "between": None,
+                             "meaning": mean, "view": d["view"], "bbox": d["bbox"], "line": d["line"], "name_line": nm["i"]})
+        else:
+            keep.append(d)
+    return labelled, keep, slopes
+
+
+DIM_NAME = re.compile(r"^(?:BARREL\s+LENGTH|CLEAR\s+SPAN|EFFECTIVE\s+(?:SPAN|LENGTH)|OVERALL\s+(?:LENGTH|WIDTH)|TOTAL\s+LENGTH|CLEAR\s+(?:WIDTH|HEIGHT|OPENING)|"
+                      r"(?:EARTH\s+)?CUSHION|VENT(?:\s+WAY)?|OPENING|CARRIAGE\s*WAY|FOOT\s*PATH|ROAD\s+WIDTH|FORMATION\s+WIDTH|BALLAST\s+CUSHION|"
+                      r"(?:TOTAL\s+)?WIDTH(?:\s+OF\s+[A-Z ]+)?|(?:CLEAR\s+)?HEIGHT(?:\s+OF\s+[A-Z ]+)?|LENGTH\s+OF\s+[A-Z ]+|C\s*/\s*C|SPACING)\.?$", re.I)
+
+
+def _name_beside(d, lines, exclude):
+    """The dimension name written just under (or over) a figure, across its dimension line: same direction, within 9 pt,
+    overlapping it along the line, and a dimension name (BARREL LENGTH, CLEAR SPAN ...), not any text."""
+    x0, y0, x1, y1 = d["bbox"]
+    for o in lines:
+        if o["i"] in exclude or o["i"] == d["line"] or re.search(r"\d", o["text"]) or not DIM_NAME.match(o["text"].strip()):
+            continue
+        b = o["bbox"]
+        if d["direction"] == "horizontal" and o["dir"] == (1, 0):
+            if (0 <= b[1] - y1 < 9 or 0 <= y0 - b[3] < 9) and b[0] <= (x0 + x1) / 2 + 30 and b[2] >= (x0 + x1) / 2 - 30:
+                return o
+        elif d["direction"] == "vertical" and o["dir"] != (1, 0) and o["dir"][0] == 0:
+            if (0 <= b[0] - x1 < 9 or 0 <= x0 - b[2] < 9) and b[1] <= (y0 + y1) / 2 + 30 and b[3] >= (y0 + y1) / 2 - 30:
+                return o
+    return None
 
 
 def parse_key_plan(view, lines):
@@ -1077,23 +1115,607 @@ def private_lines(lines):
             or (name_re and name_re.search(l["text"]))}
 
 
+# a reviewer's markup on the drawing (799-1: blue, lowercase, "1. bed level not matching with projectsheet.") is not
+# drawing text: it is kept apart as review comments, out of the tables, views and levels
+REVIEW_WORDS = re.compile(r"not\s+matching|\bupdate\b|\bchange\b|\bmention\b|to\s+be\s+signed|\bas\s*per\b|\brevise\b|"
+                          r"\bcorrect\b|\bcheck\b|\bprovide\b|\bremove\b", re.I)
+
+
+def is_review(l):
+    if l.get("color") != 0x0000FF:
+        return False
+    t = l["text"]
+    return len(re.findall(r"\b[a-z]{3,}\b", t)) >= 3 or bool(REVIEW_WORDS.search(t) and re.search(r"[a-z]", t))
+
+
+def fix_spacing(t):
+    """Markup text comes split into letters ("p ro j ectsheet", "le v el"): join a lone letter to its neighbours."""
+    for _ in range(3):
+        t = re.sub(r"(?<=[a-z]) (?=[a-z]\b)|(?<=\b[a-z]) (?=[a-z])", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def review_comments(lines):
+    """[{"no", "text"}] - the comments, cluster by cluster (lines one under the other)."""
+    groups = []
+    for l in sorted(lines, key=lambda l: (l["bbox"][1], l["bbox"][0])):
+        g = next((g for g in groups if gap(union([x["bbox"] for x in g]), l["bbox"]) < 25), None)
+        if g:
+            g.append(l)
+        else:
+            groups.append([l])
+    out = []
+    for g in groups:
+        for it in numbered(g):
+            out.append({"no": it["no"], "text": fix_spacing(it["text"])})
+    return out
+
+
+# any "LABEL = value" printed in a view ("HC = 7.819", "PROP. INVERT LVL : 391.4", "EARTH CUSHION = 0.5 M") - kept even
+# when the label is new to the reader: a value is never dropped because its label is unfamiliar
+OTHER_KV = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9 .()/'&-]*?[A-Z.)])\s*[:=]\s*(-?\d+(?:\.\d+)?)(?!\s*\+)\s*(MM|M|CM|T/M2|T/M²|M/S|KMPH|%)?(?![\w.+])",
+                      re.I)
+
+
+def read_other_values(lines, views, taken):
+    out = []
+    for l in lines:
+        if l["i"] in taken:
+            continue
+        v = assign_view(centre(l["bbox"]), views)
+        if not v:
+            continue
+        for m in OTHER_KV.finditer(l["text"]):
+            label = re.sub(r"\s+", " ", m.group(1)).strip(" .-")
+            if len(re.sub(r"[^A-Z]", "", label.upper())) < 2 or re.fullmatch(r"(CH|KM|SCALE|NO|R|DATE|SBC)", label, re.I)                     or re.search(r"\bAT\s*CH\b|\bCH\.?$|EXTENDED", label, re.I) or len(label) > 30:
+                continue                              # chainages, scales, serials, SBC (bore log) are read elsewhere
+            out.append({"label": label, "value": float(m.group(2)), "unit": (m.group(3) or "").upper() or None,
+                        "view": v["title"], "text": l["text"], "line": l["i"]})
+    return out
+
+
+# ======================================================================== what an unlabelled dimension measures
+END_WORDS = re.compile(r"WALL|BOX|SLAB|TRACK|C/L|CENTRE|CENTER|HFL|BED|FDN|FND|FOUND|FORMATION|RAIL|SOFFIT|KERB|ROAD|PITCHING|APRON|"
+                       r"CURTAIN|DROP|TOE|FACE|RETURN|HAUNCH|DETAIL|EARTH|BOUNDARY|DRAIN|FLOW|EMBANKMENT|`[A-Z]'|'[A-Z]'", re.I)
+
+
+def _segments(page):
+    """Straight horizontal and vertical line pieces of the drawing: (x0, y0, x1, y1)."""
+    hs, vs = [], []
+    for d in page.get_drawings():
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            if abs(a.y - b.y) < 0.6 and abs(a.x - b.x) > 1:
+                hs.append((min(a.x, b.x), a.y, max(a.x, b.x)))
+            elif abs(a.x - b.x) < 0.6 and abs(a.y - b.y) > 1:
+                vs.append((min(a.y, b.y), a.x, max(a.y, b.y)))
+    return hs, vs
+
+
+def _line_through(segs, pos, band, cover):
+    """The longest run of collinear pieces lying at pos +- band (across) that covers `cover` (along): (start, end) or None."""
+    near = sorted([s for s in segs if band[0] <= s[1] <= band[1]], key=lambda s: (round(s[1], 0), s[0]))
+    best = None
+    for key in sorted({round(s[1]) for s in near}, key=lambda k: abs(k - pos)):
+        run = sorted([s for s in near if round(s[1]) == key], key=lambda s: s[0])
+        merged = []
+        for a, _, b in run:
+            if merged and a <= merged[-1][1] + 1.5:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        hit = next((m for m in merged if m[0] - 1 <= cover <= m[1] + 1), None)
+        if hit:
+            best = hit
+            break
+    return best
+
+
+def dimension_ends(page, plain, lines, cls, views, exclude):
+    """For each unlabelled dimension: its dimension line and what each end lands on - a named centre line, else the
+    nearest texts in line with that end (wall names, levels, detail markers ...). Stored as d["ends"]; what the dimension
+    measures is inferred from these by the reader (and said to be inferred), never written as fact."""
+    hs, vs = _segments(page)
+    line_by_i = {l["i"]: l for l in lines}
+    # centre lines: drawn as a column of many short pieces at one x (dash-dot, often as separate segments, sometimes as a
+    # dashed path); each is named by the centre-line text whose "C" symbol sits on it (the text's left edge, or its centre)
+    cols = defaultdict(list)
+    for dd in page.get_drawings():
+        dashed_path = bool((dd.get("dashes") or "").strip()) and not (dd.get("dashes") or "").startswith("[]")
+        for it in dd["items"]:
+            if it[0] == "l" and abs(it[1].x - it[2].x) < 0.6 and abs(it[1].y - it[2].y) > 1:
+                ln = abs(it[1].y - it[2].y)
+                if ln < 16 or dashed_path:
+                    cols[round(it[1].x * 2) / 2].append((min(it[1].y, it[2].y), max(it[1].y, it[2].y)))
+    dashed = []
+    for x, pieces in cols.items():
+        if len(pieces) >= 8:
+            y0_, y1_ = min(p_[0] for p_ in pieces), max(p_[1] for p_ in pieces)
+            if y1_ - y0_ > 60:
+                dashed.append((x, y0_, y1_))
+    cl_x = defaultdict(list)
+    for c in cls:
+        l = line_by_i.get(c["line"])
+        if not l or c["view"] is None:
+            continue
+        refs_x = [l["bbox"][0], centre(l["bbox"])[0]]
+        near = [(min(abs(x - r) for r in refs_x), x) for x, a_, b_ in dashed if min(abs(x - r) for r in refs_x) < 12]
+        if near:
+            cl_x[c["view"]].append((c["name"], min(near)[1]))
+    scale_of = {}
+    for v in views:
+        m = re.match(r"1:(\d+)", v.get("scale") or "")
+        if m:
+            scale_of[v["title"]] = int(m.group(1))
+    by_view = defaultdict(list)
+    for l in lines:
+        if l["i"] not in exclude and re.search(r"[A-Z]{2,}|`[A-Z]'|'[A-Z]'", l["text"]):
+            v = assign_view(centre(l["bbox"]), views)
+            if v:
+                by_view[v["title"]].append(l)
+    # circles (protection drums, piles, pipes, weep holes ...): grouped by size along a row / column, each group named by
+    # the text whose leader points into one of its circles ("PROTECTION ARRANGEMENT")
+    circles = _circles(page)
+    group = list(range(len(circles)))
+    def root(i):
+        while group[i] != i:
+            i = group[i]
+        return i
+    for i, a_ in enumerate(circles):
+        for j in range(i + 1, len(circles)):
+            b_ = circles[j]
+            if abs(a_[2] - b_[2]) < 0.6 and (abs(a_[0] - b_[0]) < 1 and abs(a_[1] - b_[1]) < 6 * a_[2]
+                                             or abs(a_[1] - b_[1]) < 1 and abs(a_[0] - b_[0]) < 6 * a_[2]):
+                group[root(j)] = root(i)
+    gname = {}
+    if circles:
+        segs = []
+        for dd in page.get_drawings():
+            col = tuple(dd["color"]) if dd.get("color") else None
+            for it in dd["items"]:
+                if it[0] == "l" and math.hypot(it[2].x - it[1].x, it[2].y - it[1].y) > 6:
+                    segs.append((it[1].x, it[1].y, it[2].x, it[2].y, col))
+        for v in views:
+            for l in by_view.get(v["title"], []):
+                t = l["text"].strip()
+                if re.search(r"\d", t) or len(t) < 4 or not any(math.hypot(c[0] - centre(l["bbox"])[0], c[1] - centre(l["bbox"])[1]) < 150 for c in circles):
+                    continue
+                b = l["bbox"]
+                near_s = [s for s in segs if min(s[0], s[2]) < b[2] + 160 and max(s[0], s[2]) > b[0] - 160 and min(s[1], s[3]) < b[3] + 160
+                          and max(s[1], s[3]) > b[1] - 160]
+                for tx, ty in _leader_tips(b, near_s):
+                    near_c = sorted((math.hypot(tx - c[0], ty - c[1]) - c[2], k) for k, c in enumerate(circles))
+                    hit = near_c[0][1] if near_c and near_c[0][0] < 10 else None      # (arrows often stop just short of a small circle)
+                    if hit is not None:
+                        below = next((o for o in by_view[v["title"]] if o["i"] != l["i"] and not re.search(r"\d", o["text"])
+                                      and 0 <= o["bbox"][1] - b[3] < 8 and abs(o["bbox"][0] - b[0]) < 30), None)
+                        gname.setdefault(root(hit), re.sub(r"\s+", " ", t + (" " + below["text"] if below else "")).strip())
+
+    def circle_at(ex, ey, fx, fy, horizontal):
+        """The circle an extension line ends on: its centre, or an edge, on the line's own position across the dimension."""
+        pos, a0, a1 = (ex, min(ey, fy), max(ey, fy)) if horizontal else (ey, min(ex, fx), max(ex, fx))
+        best = None
+        for k, (ccx, ccy, r) in enumerate(circles):
+            c_across, c_along = (ccx, ccy) if horizontal else (ccy, ccx)
+            if not (a0 - r - 3 <= c_along <= a1 + r + 3):
+                continue
+            for at, p in (("centre", c_across), ("edge", c_across - r), ("edge", c_across + r)):
+                if abs(pos - p) < 2.0 and (best is None or abs(pos - p) < best[0]):
+                    best = (abs(pos - p), k, at, round(p - c_across, 1))
+        if not best:
+            return None
+        _, k, at, side = best
+        return {"circle": k, "group": root(k), "at": at, "side": side, "name": gname.get(root(k))}
+
+    # the sheet's plot factor: a PDF exported at another paper size than drawn for has every length k times the scale's
+    # (781-2: 1.28, 818-1: 1.42). k = the commonest ratio of a tick spacing to the figure at the scale, over all figures.
+    def ticks(d):
+        x0, y0, x1, y1 = d["bbox"]
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        if d["direction"] == "horizontal":
+            run = _line_through(hs, y1 + 2, (y0 - 6, y1 + 9), cx)
+            pos = y1 + 2
+            cross = {round(v[1], 1) for v in vs if v[0] - 3 <= pos <= v[2] + 3 and run and run[0] - 1 <= v[1] <= run[1] + 1}
+            c_ = cx
+        elif d["direction"] == "vertical":
+            run = _line_through(vs, x1 + 2, (x0 - 9, x1 + 9), cy)
+            pos = x1 + 2
+            cross = {round(h[1], 1) for h in hs if h[0] - 3 <= pos <= h[2] + 3 and run and run[0] - 1 <= h[1] <= run[1] + 1}
+            c_ = cy
+        else:
+            return None
+        if not run:
+            return None
+        cand = sorted(cross | {run[0], run[1]})
+        return [(a_, b_) for a_ in cand for b_ in cand if a_ <= c_ + 2 and b_ >= c_ - 2 and b_ - a_ > 2]
+    votes, vvotes = Counter(), defaultdict(Counter)
+    for d in plain:
+        sc = scale_of.get(d["view"])
+        pairs = ticks(d) if sc else None
+        if pairs:
+            want = d["value"] / (25.4 / 72 * sc)
+            g = min((p_[1] - p_[0] for p_ in pairs), key=lambda x: abs(math.log(x / want)))
+            r = g / want
+            if 0.2 < r < 5:
+                votes[round(round(r / 0.02) * 0.02, 2)] += 1
+                vvotes[d["view"]][round(round(r / 0.02) * 0.02, 2)] += 1
+
+    def factor(vt, fallback):
+        near = lambda r: sum(vt.get(round(r + e, 2), 0) for e in (-0.02, 0, 0.02))
+        if not vt:
+            return fallback
+        best = max(vt, key=near)
+        # a clear majority only (scattered ratios: no factor - better no ends than wrong ones)
+        return (best if abs(best - 1) > 0.06 else 1.0) if near(best) >= 5 and near(best) >= 0.4 * sum(vt.values()) else fallback
+    k_sheet = factor(votes, 1.0)
+    k_view = {v: factor(vt, k_sheet) for v, vt in vvotes.items()}      # (a long sheet's views exported at different factors)
+    for d in plain:
+        x0, y0, x1, y1 = d["bbox"]
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        # the dimension's own ends: in a chain (816 | 11580 | 3050 ...) one line carries them all, so the ends are the
+        # extension lines crossing it on either side of the figure - the pair whose spacing matches the figure at the
+        # view's scale (no pair that fits: no ends, rather than wrong ones)
+        sc = scale_of.get(d["view"])
+        want = d["value"] / (25.4 / 72 * sc) * k_view.get(d["view"], k_sheet) if sc else None      # points on paper (x the plot factor)
+        if d["direction"] == "horizontal":
+            run = _line_through(hs, y1 + 2, (y0 - 6, y1 + 9), cx)
+            yl = y1 + 2
+            cross = sorted({round(v[1], 1) for v in vs if v[0] - 3 <= yl <= v[2] + 3 and run and run[0] - 1 <= v[1] <= run[1] + 1})
+            centre_ = cx
+        elif d["direction"] == "vertical":
+            run = _line_through(vs, x1 + 2, (x0 - 9, x1 + 9), cy)
+            xl = x1 + 2
+            cross = sorted({round(h[1], 1) for h in hs if h[0] - 3 <= xl <= h[2] + 3 and run and run[0] - 1 <= h[1] <= run[1] + 1})
+            centre_ = cy
+        else:
+            continue
+        if not run:
+            continue
+        cand = sorted(set(cross) | {run[0], run[1]})
+        pairs = [(a_, b_) for a_ in cand for b_ in cand if a_ <= centre_ + 2 and b_ >= centre_ - 2 and b_ - a_ > 2]
+        if want:
+            pairs = [p_ for p_ in pairs if abs((p_[1] - p_[0]) - want) <= max(4, 0.08 * want)]
+            if not pairs:
+                continue
+            a_, b_ = min(pairs, key=lambda p_: abs((p_[1] - p_[0]) - want))
+        else:
+            if not pairs:
+                continue
+            a_, b_ = min(pairs, key=lambda p_: p_[1] - p_[0])
+        ends = [(a_, yl), (b_, yl)] if d["direction"] == "horizontal" else [(xl, a_), (xl, b_)]
+        out = []
+        for ex, ey in ends:
+            item = {}
+            # follow the extension line from the dimension line's end to the feature it comes from
+            if d["direction"] == "horizontal":
+                ext = [s for s in vs if abs(s[1] - ex) < 1.5 and s[0] - 4 <= ey <= s[2] + 4]
+                fx, fy = (ex, max((s for s in ext), key=lambda s: max(abs(s[0] - ey), abs(s[2] - ey)))[0]
+                          if abs(max(ext, key=lambda s: max(abs(s[0] - ey), abs(s[2] - ey)))[0] - ey) >
+                          abs(max(ext, key=lambda s: max(abs(s[0] - ey), abs(s[2] - ey)))[2] - ey)
+                          else max(ext, key=lambda s: max(abs(s[0] - ey), abs(s[2] - ey)))[2]) if ext else (ex, ey)
+                # on a centre line: the end lies on the dashed line drawn under that centre line's name
+                hit = [n for n, x in cl_x.get(d["view"], []) if abs(x - ex) < 2.0]
+                if hit:
+                    item["centre_line"] = hit[0]
+            else:
+                ext = [s for s in hs if abs(s[1] - ey) < 1.5 and s[0] - 4 <= ex <= s[2] + 4]
+                if ext:
+                    far = max(ext, key=lambda s: max(abs(s[0] - ex), abs(s[2] - ex)))
+                    fx, fy = (far[0] if abs(far[0] - ex) > abs(far[2] - ex) else far[2]), ey
+                else:
+                    fx, fy = ex, ey
+            ci = circle_at(ex, ey, fx, fy, d["direction"] == "horizontal") if circles else None
+            if ci:
+                item["circle"] = ci
+            # texts naming something, close to where the extension line starts (the measured feature)
+            gap_to = lambda l: math.hypot(max(l["bbox"][0] - fx, 0, fx - l["bbox"][2]), max(l["bbox"][1] - fy, 0, fy - l["bbox"][3]))
+            named = sorted([l for l in by_view.get(d["view"], []) if l["i"] != d["line"] and END_WORDS.search(l["text"]) and gap_to(l) < 80],
+                           key=gap_to)[:2]
+            if named:
+                item["near"] = [re.sub(r"\s+", " ", l["text"]).strip() for l in named]
+            out.append(item)
+        # the two ends on circles: the same point of two circles of a group = their spacing; opposite edges of one
+        # circle = its diameter (stored as d["circles"]; the circle ids themselves are not kept)
+        c0, c1 = (out[0].get("circle"), out[1].get("circle")) if len(out) == 2 else (None, None)
+        if c0 and c1:
+            if c0["circle"] == c1["circle"] and c0["at"] == c1["at"] == "edge" and c0["side"] == -c1["side"]:
+                d["circles"] = {"measures": "diameter", "name": c0["name"]}
+            elif c0["circle"] != c1["circle"] and c0["group"] == c1["group"] and c0["at"] == c1["at"] and abs(c0["side"] - c1["side"]) < 1:
+                d["circles"] = {"measures": "spacing", "name": c0["name"]}
+        for e in out:
+            ci = e.pop("circle", None)
+            if ci:
+                e["on_circle"] = {"at": ci["at"], "name": ci["name"]}
+        if any(out):
+            d["ends"] = out
+
+
+def _leader_tips(box, long_):
+    """Where the leader lines leaving a text end: connected pieces of one colour followed away from the text (a fork is
+    two arrows). long_ = [(x0, y0, x1, y1, colour)] pieces longer than 6 pt."""
+    x0, y0, x1, y1 = box
+    nb = lambda px, py, pad=6: x0 - pad <= px <= x1 + pad and y0 - pad <= py <= y1 + pad
+    tips = []
+    for s in long_:
+        for (ax, ay), (bx, by) in (((s[0], s[1]), (s[2], s[3])), ((s[2], s[3]), (s[0], s[1]))):
+            if not (nb(ax, ay) and not nb(bx, by, 2)):
+                continue
+            cur, seen = (bx, by), {s}
+            for _ in range(4):
+                nxt = [t for t in long_ if t not in seen and t[4] == s[4] and (math.hypot(t[0] - cur[0], t[1] - cur[1]) < 1.2
+                                                                               or math.hypot(t[2] - cur[0], t[3] - cur[1]) < 1.2)]
+                if not nxt:
+                    break
+                outs = []
+                for t in nxt:
+                    seen.add(t)
+                    far = (t[2], t[3]) if math.hypot(t[0] - cur[0], t[1] - cur[1]) < 1.2 else (t[0], t[1])
+                    if not nb(*far, 2):
+                        outs.append(far)
+                if len(outs) != 1:
+                    tips += outs
+                    cur = None
+                    break
+                cur = outs[0]
+            if cur:
+                tips.append(cur)
+    uniq = []
+    for t in tips:
+        if all(math.hypot(t[0] - u[0], t[1] - u[1]) > 4 for u in uniq):
+            uniq.append(t)
+    return uniq
+
+
+def _circles(page):
+    """Circles drawn on the sheet (paths made only of curves, as wide as high): [(cx, cy, r)]."""
+    out = []
+    for d in page.get_drawings():
+        its = d["items"]
+        if not its or any(it[0] != "c" for it in its) or len(its) not in (4, 8):
+            continue
+        xs = [p.x for it in its for p in it[1:]]
+        ys = [p.y for it in its for p in it[1:]]
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+        if 3 < w < 120 and abs(w - h) < 0.8:
+            c = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, w / 2)
+            if all(abs(c[0] - o[0]) > 0.5 or abs(c[1] - o[1]) > 0.5 for o in out):
+                out.append(c)
+    return out
+
+
+def callout_chains(lines, exclude, stop=()):
+    """Labels written over several lines ("300 THK. STONE" / "PITCHING WITH" / "CEMENT GROUTING") joined into one:
+    {head line id: (full text, [line ids])}. A line continues the one above when it sits right under it (within about
+    half a text height), in the same direction, colour and size, starting at the same place or centred under it, and
+    has no figures (a level or a dimension under a label is not part of it)."""
+    # in the reading frame of each direction: u along the text, v across it (the next line has the larger v) - upright
+    # text reads bottom to top, its next line to the right
+    def frame(b, d):
+        if d == (0, -1):
+            return (-b[3], b[0], -b[1], b[2])
+        if d == (0, 1):
+            return (b[1], -b[2], b[3], -b[0])
+        return tuple(b)
+    pool = [l for l in lines if l["i"] not in exclude and l["dir"] in ((1, 0), (0, -1), (0, 1))]
+    fb = {l["i"]: frame(l["bbox"], l["dir"]) for l in pool}
+    nxt = {}
+    taken = set()
+    for l in sorted(pool, key=lambda l: (fb[l["i"]][1], fb[l["i"]][0])):
+        b = fb[l["i"]]
+        h = b[3] - b[1]
+        best = None
+        for o in pool:
+            if o["i"] == l["i"] or o["dir"] != l["dir"] or o["i"] in taken or o["i"] in stop or not re.search(r"[A-Za-z]{3}", o["text"])                     or DIM_NUM.match(o["text"].strip()):
+                continue
+            ob = fb[o["i"]]
+            if not (-1 <= ob[1] - b[3] < max(3.5, 0.8 * h)) or o.get("color") != l.get("color") or abs(o["size"] - l["size"]) > 0.25 * l["size"]:
+                continue
+            if abs(ob[0] - b[0]) < 8 or abs((ob[0] + ob[2]) / 2 - (b[0] + b[2]) / 2) < 10 or abs(ob[2] - b[2]) < 4:
+                if best is None or ob[1] < fb[best["i"]][1]:
+                    best = o
+        if best is not None:
+            nxt[l["i"]] = best
+            taken.add(best["i"])
+    out = {}
+    for l in pool:
+        if l["i"] in taken or l["i"] not in nxt:
+            continue
+        ids, texts, cur = [l["i"]], [l["text"]], l
+        while cur["i"] in nxt and len(ids) < 5:
+            cur = nxt[cur["i"]]
+            ids.append(cur["i"])
+            texts.append(cur["text"])
+        out[l["i"]] = (re.sub(r"\s+", " ", " ".join(t.replace("|", " ") for t in texts)).strip(), ids)
+    return out
+
+
+def label_meaning(text):
+    """(kind, what, meaning) for a labelled-dimension text, or None (the rules of read_dims)."""
+    for pat, kind, meaning in K.LABELLED_DIMS:
+        m = re.search(pat, text, re.I)
+        if not m:
+            continue
+        what = (m.groupdict().get("what") or "").strip(" .,-")
+        what = re.sub(r"[()]", " ", what)
+        what = re.sub(r"^\s*(?:BY|WITH|OF|AND)\s+", "", what, flags=re.I)
+        what = re.sub(r"\s+(?:OF|BY|WITH|AND)\s*$", "", what, flags=re.I)
+        what = re.sub(r"\s+", " ", what).strip(" .,-") or None
+        return kind, what, meaning, m
+    return None
+
+
+def legend_key(page, legend_lines):
+    """What each legend entry looks like, from the sample drawn to its left: [{"label", "colour", "style"}] - colour of
+    its lines (red / black / blue ...), style "hatched" (many short slanted strokes) or "line"."""
+    out = []
+    drawings = page.get_drawings()
+    for l in legend_lines:
+        t = re.sub(r"\s+", " ", l["text"]).strip()
+        if not re.search(r"[A-Z]{3}", t) or re.match(r"^LEGENDS?\b", t, re.I):
+            continue
+        b = l["bbox"]
+        cols, short_slant, short_flat, n, dashed_path = Counter(), 0, 0, 0, False
+        for d in drawings:
+            r = d["rect"]
+            if r.y1 < b[1] - 5 or r.y0 > b[3] + 5 or r.x1 > b[0] + 2 or r.x0 < b[0] - 90:
+                continue
+            for it in d["items"]:
+                if it[0] != "l":
+                    continue
+                ln = math.hypot(it[2].x - it[1].x, it[2].y - it[1].y)
+                if ln > 80 or ln < 0.5:                  # (the legend box's own frame / rules)
+                    continue
+                n += 1
+                cols[colour_name(d.get("color"))] += 1
+                ang = abs(math.degrees(math.atan2(it[2].y - it[1].y, it[2].x - it[1].x))) % 90
+                short_slant += ln < 14 and 20 < ang < 70
+                short_flat += ln < 9 and not 20 < ang < 70
+            if (d.get("dashes") or "").strip() and not (d.get("dashes") or "").startswith("[]"):
+                dashed_path = True
+        if n:
+            style = "hatched" if short_slant >= 3 else "dashed" if short_flat >= 3 or dashed_path else "line"
+            out.append({"label": t, "colour": cols.most_common(1)[0][0], "style": style})
+    return out
+
+
+def colour_name(c):
+    """A text's colour as a word: red / blue / black / grey / other (red = proposed work, black = existing on these GADs)."""
+    c = _rgb(c)
+    if not c:
+        return None
+    r, g, b = c
+    if r > 0.7 and g < 0.35 and b < 0.35:
+        return "red"
+    if b > 0.6 and r < 0.35 and g < 0.5:
+        return "blue"
+    if max(c) < 0.25:
+        return "black"
+    if abs(r - g) < 0.1 and abs(g - b) < 0.1:
+        return "grey"
+    return "other"
+
+
+def _is_red(c):
+    return bool(c) and c[0] > 0.8 and c[1] < 0.3 and c[2] < 0.3
+
+
+def _is_black(c):
+    return bool(c) and max(c) < 0.25
+
+
+def dismantle_marks(page, lines, views, exclude):
+    """The "TO BE DISMANTLED" notes in the views and what their arrows point at: hatched (the legend's DISMANTLING
+    WORKS), angled walls (the splayed wing walls at a box end), proposed (red) work drawn next to the tip, and the part
+    names written in black (existing) close by. Arrows followed only while the trace is clean (1-4 tips); otherwise the
+    note is kept without tip details."""
+    segs = []
+    for d in page.get_drawings():
+        col = tuple(d["color"]) if d.get("color") else None
+        for it in d["items"]:
+            if it[0] == "l":
+                segs.append((it[1].x, it[1].y, it[2].x, it[2].y, col))
+    if not segs:
+        return []
+    L = lambda s: math.hypot(s[2] - s[0], s[3] - s[1])
+    ang = lambda s: abs(math.degrees(math.atan2(s[3] - s[1], s[2] - s[0]))) % 90
+    long_ = [s for s in segs if L(s) > 6]
+    out = []
+    used = set()
+    cand = [l for l in lines if l["i"] not in exclude and re.search(r"DISMANTL", l["text"], re.I) and len(l["text"]) < 60]
+    for l in cand:
+        if l["i"] in used:
+            continue
+        # "TO BE" / "(TO BE" on the line above belongs to the note
+        box = list(l["bbox"])
+        above = [o for o in lines if o["i"] not in exclude and o["i"] != l["i"] and 0 <= box[1] - o["bbox"][3] < 8
+                 and abs(o["bbox"][0] - box[0]) < 40 and re.fullmatch(r"\(?\s*(?:TO\s+BE|EXISTING.*|PORTION.*|PART.*)", o["text"].strip(), re.I)]
+        text = re.sub(r"\s+", " ", " ".join([o["text"] for o in above] + [l["text"]])).strip()
+        for o in above:
+            box = [min(box[0], o["bbox"][0]), min(box[1], o["bbox"][1]), max(box[2], o["bbox"][2]), max(box[3], o["bbox"][3])]
+            used.add(o["i"])
+        v = assign_view(centre(box), views)
+        if not v:
+            continue
+        uniq = _leader_tips(box, long_)
+        item = {"text": text, "view": v["title"], "bbox": [round(c, 1) for c in box]}
+        if 1 <= len(uniq) <= 4:
+            def dist(s, tx, ty):
+                ax, ay, bx, by = s[:4]
+                q = (bx - ax) ** 2 + (by - ay) ** 2
+                t = 0 if q == 0 else max(0, min(1, ((tx - ax) * (bx - ax) + (ty - ay) * (by - ay)) / q))
+                return math.hypot(ax + t * (bx - ax) - tx, ay + t * (by - ay) - ty)
+            hatched = angled = red = 0
+            for tx, ty in uniq:
+                near = [s for s in segs if dist(s, tx, ty) < 14]
+                hatched += sum(1 for s in near if _is_black(s[4]) and 2 < L(s) < 14 and 20 < ang(s) < 70) >= 2
+                angled += any(_is_black(s[4]) and L(s) >= 25 and 10 < ang(s) < 80 for s in near)
+                red += any(_is_red(s[4]) and dist(s, tx, ty) < 40 for s in segs)
+            parts = []
+            for tx, ty in uniq:
+                for o in lines:
+                    if o["i"] in exclude or o["i"] == l["i"] or _is_red(_rgb(o.get("color"))) or not re.search(
+                            r"WALL|SLAB|PARAPET|APRON|FLOOR|PITCHING|ABUTMENT|PIER|BOX|KERB|RAILING|CUSHION|CUT[- ]?WATER", o["text"], re.I):
+                        continue
+                    b = o["bbox"]
+                    if math.hypot(max(b[0] - tx, 0, tx - b[2]), max(b[1] - ty, 0, ty - b[3])) < 60:
+                        parts.append(re.sub(r"\s+", " ", o["text"]).strip())
+            item.update({"tips": len(uniq), "short_strokes": hatched, "angled": angled, "proposed_next_to": red,
+                         "parts": list(dict.fromkeys(parts))[:3]})
+        out.append(item)
+    return out
+
+
+def _rgb(c):
+    """A text span's colour (an int 0xRRGGBB) as (r, g, b) in 0..1."""
+    if c is None:
+        return None
+    if isinstance(c, (tuple, list)):
+        return tuple(c)
+    return ((c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255)
+
+
 # ======================================================================== one GAD
 def gad_id_of(path):
     m = re.search(r"GAD[- ]+(.+?)_V(\d+)", Path(path).stem)
     return (re.sub(r"\s+", "", m.group(1)), int(m.group(2))) if m else (Path(path).stem, None)
 
 
-def annotate(pdf):
-    doc = pymupdf.open(pdf)
-    page = doc[0]
-    if page.rotation:                                  # some sheets are stored rotated: read them as they are seen
-        page.remove_rotation()
+def annotate(pdf, log=print):
+    """A GAD's annotation from a vector PDF, or - through the local OCR - from a scanned PDF or a PNG / JPG of the sheet."""
+    source = "pdf text"
+    if Path(pdf).suffix.lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"):
+        import image_page
+        page, source = image_page.open_image_page(pdf, log=log), "ocr"
+    else:
+        doc = pymupdf.open(pdf)
+        page = doc[0]
+        if page.rotation:                              # some sheets are stored rotated: read them as they are seen
+            page.remove_rotation()
+        if len(page.get_text("words")) < 50:          # a scanned sheet: no text layer to read
+            import image_page
+            page, source = image_page.open_image_page(pdf, log=log), "ocr"
     lines = load_lines(page)
     private = private_lines(lines)
     sigs = [l for l in lines if SIGNATURE.search(l["text"])]
     pboxes = [l["bbox"] for l in lines if l["i"] in private]
     lines = [l for l in lines if l["i"] not in private]
+    review = [l for l in lines if is_review(l)]
+    lines = [l for l in lines if not is_review(l)]
     words = [w for w in page.get_text("words") if not any(inside(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), b) for b in pboxes)]
+    # a review comment's own words go too, only those: inside its box, lowercase and no digits (the table under a
+    # comment is in capitals; its values with units, "1x1.22m", have digits)
+    def comment_word(w):
+        for r in review:
+            if not inside(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), r["bbox"], pad=2):
+                continue
+            if re.search(r"[a-z]", w[4]) and not re.search(r"\d", w[4]) and not re.fullmatch(r"No\.?", w[4], re.I):
+                return True
+            if re.fullmatch(r"\d{1,2}\.", w[4]) and abs(w[0] - r["bbox"][0]) < 4:      # the comment's own "1."
+                return True
+        return False
+    words = [w for w in words if not comment_word(w)]
     heads = find_headings(lines)
     regions = heading_regions(lines, heads, page.rect.width, page.rect.height)
     panel_boxes = [r["box"] for r in regions]
@@ -1162,6 +1784,40 @@ def annotate(pdf):
     cls = centre_lines(lines, views)
     cl_ids = {c["line"] for c in cls} | {l["i"] for l in lines if l["text"].strip() == "L"}
     labelled, plain, slopes = read_dims(lines, views, cls, exclude | used | cl_ids | band_ids)
+    dimension_ends(page, plain, lines, cls, views, exclude)
+    taken = exclude | used | cl_ids | band_ids | {d["line"] for d in labelled} | {d.get("line") for d in slopes if d.get("line") is not None}
+    other = read_other_values(lines, views, taken)
+    dismantle = dismantle_marks(page, lines, views, exclude) if source == "pdf text" else []
+    # labels over several lines: a labelled dimension gets its whole label; every view gets its callouts (the texts
+    # written on it, multi-line ones joined) - asked about by name ("300 THK. STONE PITCHING WITH CEMENT GROUTING")
+    line_by_id = {l["i"]: l for l in lines}
+    chains = callout_chains(lines, exclude | band_ids, stop=used | cl_ids | {d["line"] for d in labelled if d.get("name_line") is None})
+    in_chain = {i for _, ids in chains.values() for i in ids[1:]}
+    for d in labelled:
+        if d["line"] in chains and d["kind"] in ("thickness", "gap", "diameter"):
+            full = chains[d["line"]][0]
+            r = label_meaning(full)
+            if r and r[0] == d["kind"]:
+                kind, what, meaning, _ = r
+                d["label"], d["what"] = full, what
+                d["meaning"] = meaning.format(what=(what or "item").lower(), between="the two tracks shown")
+    not_callout = used | cl_ids | band_ids | {d.get("name_line") for d in labelled} | {d.get("line") for d in slopes if d.get("line") is not None} | in_chain
+    for v in views:
+        calls = []
+        for l in lines:
+            if l["i"] in exclude or l["i"] in not_callout or assign_view(centre(l["bbox"]), views) is not v:
+                continue
+            joined = l["i"] in chains and v["kind"] != "bore_log"        # (a bore log's stacked lines are separate layers)
+            t = chains[l["i"]][0] if joined else re.sub(r"\s+", " ", l["text"].replace("|", " ")).strip()
+            if len(re.findall(r"[A-Za-z]", t)) < 3 or DIM_NUM.match(t):
+                continue
+            if any(d["line"] == l["i"] for d in labelled) and l["i"] not in chains:
+                continue                                   # (a one-line labelled dimension: its own fact)
+            ids = chains[l["i"]][1] if joined else [l["i"]]
+            bx = union([line_by_id[i]["bbox"] for i in ids])
+            if t not in {c["text"] for c in calls}:
+                calls.append({"text": t, "colour": colour_name(l.get("color")), "bbox": [round(c, 1) for c in bx]})
+        v["callouts"] = calls
     for v in views:
         v_lines = [l for l in lines if l["i"] not in exclude and assign_view(centre(l["bbox"]), views) is v]
         v["texts"] = [re.sub(r"\s+", " ", l["text"].replace("|", " ")).strip() for l in sorted(v_lines, key=lambda l: (round(centre(l["bbox"])[1] / 6), l["bbox"][0]))]
@@ -1183,6 +1839,7 @@ def annotate(pdf):
             notes[k] = parse_abbreviations(r["lines"])
         elif k == "legends":
             notes[k] = [re.sub(r"\s+", " ", x["text"]) for x in rows_of(r["lines"])]
+            notes["legend_key"] = legend_key(page, r["lines"])
         elif k in ("comparative_table", "track_details"):
             t = parse_table(r, words, cols_from=(tables.get("comparative_table") or {}).get("_cols"))
             if len(t["rows"]) >= len((tables.get(k) or {}).get("rows", [])):    # the same heading met again elsewhere
@@ -1202,12 +1859,15 @@ def annotate(pdf):
         if isinstance(t, dict):
             t.pop("_cols", None)
 
+    if review:
+        notes["review_comments"] = review_comments(review)
     gid, ver = gad_id_of(pdf)
     bridge = bridge_from_title(tb.get("title", ""))
     tb["revisions"] = parse_revisions(lines)
-    ann = {"gad_id": gid, "version": ver, "source_pdf": Path(pdf).name, "page_size": [page.rect.width, page.rect.height],
+    ann = {"gad_id": gid, "version": ver, "source_pdf": Path(pdf).name, "text_source": source,
+           "page_size": [page.rect.width, page.rect.height],
            "title_block": tb, "bridge": bridge, "views": views, "levels": levels, "centre_lines": cls,
-           "labelled_dims": labelled, "slopes": slopes, "dims": plain, "tables": tables, "bore_logs": bore_logs, "notes": notes,
+           "labelled_dims": labelled, "slopes": slopes, "dims": plain, "other_values": other, "dismantle": dismantle, "tables": tables, "bore_logs": bore_logs, "notes": notes,
            "panel": [{"kind": r["kind"], "box": [round(v, 1) for v in union([r["heading_box"]] + [l["bbox"] for l in r["lines"]])]}
                      for r in regions] + ([{"kind": "title_block", "box": [round(v, 1) for v in skip[len(panel_boxes)]]}] if div else [])}
     ann["findings"] = findings(ann)

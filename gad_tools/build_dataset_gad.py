@@ -26,11 +26,15 @@ Tasks
     qa_computed   simple arithmetic from printed levels (cushion over the box, clearance), shown as computed
     qa_summary    a summary of the GAD
     qa_absent     things that are not on the drawing -> said so, nothing invented
+    qa_callout    anything written on the views (labels over several lines joined): what it is, where, "is X on view Y?"
+    qa_cl         a centre line: no value of its own; the distances from it to the other centre lines
+    qa_why        "why ...?" from what the drawing shows (legend, title, tables, notes, levels); no reason on it -> said so
   Images (so the model knows what each diagram looks like and can read it):
     img_view      a whole view -> which view it is and what it represents (no values: too small to read at this size)
     img_view_facts  a whole view + its facts -> what it shows, with the values and their meanings
     img_tile      a 768 x 768 tile of a view at 150 dpi -> the labelled levels and dimensions fully visible in it, as JSON
     img_table     comparative table / track details / specifications / title block crop at 150 dpi -> JSON
+    img_spot      a crop around what a question is about + the facts + the question (as ask_gad sends it) -> the answer
 Output: data/gad/dataset/{train,val,test}.jsonl and images/. Thinking is off for every row (direct answers).
 """
 import json
@@ -77,15 +81,48 @@ def cap(s):
     return s[:1].upper() + s[1:] if s else s
 
 
+# the way engineers actually type: shorthand for the same thing (the facts finder knows these words: facts.SYN)
+SHORTHAND = [(r"\bformation level\b", ["FL", "formation lvl", "formation"]), (r"\bsoffit level\b", ["soffit lvl", "soffit"]),
+             (r"\bfounding level\b", ["FDN level", "foundation level", "founding lvl", "FDN lvl"]),
+             (r"\bbed level\b", ["BL", "bed lvl"]), (r"\btop of box level\b", ["TOB level", "box top level", "top of box"]),
+             (r"\brail level\b", ["rail lvl", "rail top level"]), (r"\bexisting\b", ["exg", "ex.", "old"]),
+             (r"\bproposed\b", ["prop.", "new"]), (r"\bdrawing number\b", ["dwg no", "drawing no.", "DWG number"]),
+             (r"\bcomparative table\b", ["hydraulic data", "comparison table"]), (r"\btrack centre distance\b", ["T/C", "track centres"]),
+             (r"\bvertical clearance\b", ["VC", "clearance"]), (r"\bthis GAD\b", ["this drawing", "the GAD", "this sheet"]),
+             (r"\bbridge\b", ["br.", "bridge"])]
+OPENERS = [(r"^What is the ", ["What's the ", "Give me the ", "Tell me the ", "Find the ", "", "What will be the ", "Show me the "]),
+           (r"^Which ", ["What ", "Which "])]
+
+
 def vary(q):
-    """Light variation of a question's wording (values untouched)."""
+    """Variation of a question's wording, numbers untouched: openers, the shorthand engineers use, endings, case,
+    the odd typo. (v1 varied only the first letter: real questions are worded every which way.)"""
+    for pat, alts in OPENERS:
+        if re.search(pat, q) and rng.random() < 0.5:
+            q = re.sub(pat, rng.choice(alts), q, count=1)
+            q = q[:1].upper() + q[1:]
+    for pat, alts in SHORTHAND:
+        if re.search(pat, q, re.I) and rng.random() < 0.3:
+            q = re.sub(pat, rng.choice(alts), q, count=1, flags=re.I)
+    if rng.random() < 0.12:
+        q = rng.choice(["Quick one: ", "Hey, ", "Can you check: ", "Tell me: ", "Pls tell ", "I need "]) + q[0].lower() + q[1:]
+    if rng.random() < 0.08 and q.endswith("?"):
+        q = q[:-1] + rng.choice([" on this GAD?", " for this bridge?", " here?", " as per the drawing?"])
     r = rng.random()
-    if r < 0.15:
+    if r < 0.2:
         q = q[0].lower() + q[1:]
-    if rng.random() < 0.15:
-        q = rng.choice(["Quick one: ", "Hey, ", "Can you check: ", "Tell me: "]) + q[0].lower() + q[1:]
-    if rng.random() < 0.1:
-        q = q.rstrip("?")
+    elif r < 0.25:
+        q = q.upper()
+    if rng.random() < 0.2:
+        q = q.rstrip("?").rstrip()
+    if rng.random() < 0.05:                       # a typo in one longer word (never in a number)
+        ws = [i for i, w in enumerate(q.split(" ")) if len(w) > 5 and w.isalpha()]
+        if ws:
+            parts = q.split(" ")
+            w = parts[rng.choice(ws)]
+            j = rng.randrange(1, len(w) - 2)
+            parts[parts.index(w)] = w[:j] + w[j + 1] + w[j] + w[j + 2:]
+            q = " ".join(parts)
     return q
 
 
@@ -108,6 +145,23 @@ def views_phrase(views):
 
 
 # ======================================================================== question / answer generators
+# how engineers type a level, whatever the drawing prints: the kind's shorthand and the status's
+LEVEL_SHORT = {"formation_level": ["FL", "F.L", "FRL", "formation lvl", "formation"], "rail_level": ["rail lvl", "rail level", "TRL", "rail top"],
+               "soffit_level": ["soffit lvl", "soffit", "SOFFIT LVL"], "top_of_box_level": ["TOB", "TOB lvl", "top of box", "box top lvl"],
+               "bed_level": ["BL", "B.L", "bed lvl", "BED LVL"], "founding_level": ["FDN lvl", "FND LVL", "founding lvl", "FDN"],
+               "hfl": ["HFL", "H.F.L"], "observed_hfl": ["OHFL", "O.H.F.L"], "calculated_hfl": ["CHFL", "C.H.F.L"]}
+STATUS_SHORT = {"proposed": ["PROP", "PROP.", "prop", "proposed", "new"], "existing": ["EXG", "EX.", "exg", "existing", "exist", "old"], None: [""]}
+
+
+def terse(kind, status):
+    """'PROP FL', 'exg BL?', 'FL (proposed)', 'TOB lvl': a question as short as engineers type it."""
+    k = rng.choice(LEVEL_SHORT.get(kind, [KIND_NAME.get(kind, kind)]))
+    st = rng.choice(STATUS_SHORT.get(status, [""]))
+    form = rng.choice(["{s} {k}", "{s} {k}?", "{k} ({s})", "{s} {k} value", "what is {s} {k}", "{s} {k} of the box"])
+    q = re.sub(r"\s+", " ", form.format(s=st, k=k)).replace("( )", "").replace("()", "").strip()
+    return rng.choice([q, q.upper(), q.lower()])
+
+
 def qa_levels(a):
     out = []
     groups = defaultdict(list)
@@ -141,6 +195,8 @@ def qa_levels(a):
               f"What {status + ' ' if status else ''}{short}{elem_phrase(el)} does the drawing show?"]
         for q in rng.sample(qs, 2):
             out.append(("qa_level", vary(q), ans, refs))
+        if not el:                                     # and as engineers type it: "PROP FL", "exg BL?", "TOB lvl"
+            out.append(("qa_level", terse(kind, status), ans, refs))
     # "the rail level" without saying existing or proposed: both are given
     by_kind = defaultdict(dict)
     for (kind, status, el), ls in groups.items():
@@ -156,6 +212,7 @@ def qa_levels(a):
             ans = cap("; ".join(parts)) + f" (the existing value is for the existing bridge/track, the proposed one for the new box). " \
                   f"The {KIND_NAME[kind].split(' (')[0]} is {st['proposed'][0]['meaning']}."
             out.append(("qa_level", vary(f"What is the {SHORT.get(kind, KIND_NAME[kind])}?"), ans, refs))
+            out.append(("qa_level", terse(kind, None), ans, refs))
     # labels
     seen = set()
     for l in a["levels"]:
@@ -233,6 +290,7 @@ def qa_plain(a):
     for d in a["dims"]:
         by_view[d["view"]].append(d)
     for view, ds in by_view.items():
+        ds = [d for d in ds if not FX.dim_span(d)]
         for d in rng.sample(ds, min(2, len(ds))):
             v = f"{d['value']:g}"
             same = [x for x in ds if x["value"] == d["value"]]
@@ -242,6 +300,12 @@ def qa_plain(a):
                    "on and its direction; the drawn dimension line shows the exact points it is measured between.")
             out.append(("qa_plain_dim", vary(rng.choice([f"What does {v} on the {view.lower()} represent?", f"What is the {v} dimension on {view}?"])),
                         ans, [("plain", view, d["direction"])]))
+    # what an unlabelled dimension measures, read from where its dimension line's ends are (never a guessed name)
+    with_ends = [d for d in a["dims"] if FX.dim_span(d)]
+    circ = [d for d in with_ends if d.get("circles")]
+    for d in list(dict.fromkeys(map(id, circ[:2] + rng.sample(with_ends, min(5, len(with_ends)))))):
+        d = next(x for x in with_ends if id(x) == d)
+        out.append(plain_answer(a, d))
     return out
 
 
@@ -412,6 +476,18 @@ def qa_bore(a):
     return out
 
 
+def qa_review(a):
+    """Reviewer's markup on the drawing (blue comments): listed when there is any, said so when there is none."""
+    rc = a["notes"].get("review_comments") or []
+    q = vary(rng.choice(["Are there any review comments on this drawing?", "What has the reviewer marked on this GAD?",
+                         "Are there any remarks or corrections marked on the drawing?"]))
+    if not rc:
+        return [("qa_review", q, "No reviewer's comments or markup are marked on this drawing.", [])]
+    ans = (f"Yes, {len(rc)} reviewer's comment(s) are marked on the drawing (blue markup, not part of the design): "
+           + "; ".join(f"{(it['no'] + '. ') if it['no'] else ''}{it['text']}" for it in rc) + ".")
+    return [("qa_review", q, ans, [("review_comments", it["no"], it["text"][:30]) for it in rc])]
+
+
 def qa_revisions(a):
     revs = a["title_block"].get("revisions") or []
     if not revs:
@@ -526,7 +602,7 @@ def qa_views(a):
         if ds:
             ans += " Labelled dimensions on it: " + "; ".join(ds[:6]) + "."
         q = rng.choice([f"What does the {v['title'].lower()} represent?", f"What is shown in {v['title']}?", f"Explain the {v['title'].lower()}."])
-        out.append(("qa_view", vary(q), ans, [("view", v["title"])] + [("level", l["label"], l["value"]) for l in a["levels"] if l["view"] == v["title"]][:10]
+        out.append(("qa_view", vary(q), ans, [("view", v["title"])] + list(dict.fromkeys(("level", l["label"], l["value"]) for l in a["levels"] if l["view"] == v["title"]))[:10]
                     + [("dim", d["label"], d["value"]) for d in a["labelled_dims"] if d["view"] == v["title"]][:6]))
     return out
 
@@ -577,7 +653,7 @@ def qa_summary(a):
     if tb.get("project"):
         parts.append(f"project: {tb['project']}" + (f", {tb['division']} division" if tb.get("division") else "") + (f", {tb['section']} section" if tb.get("section") else ""))
     lv_parts = []
-    refs = ["bridge", "title", "views"]
+    refs = ["bridge", "title", "views", "drawing", "project"]      # (v1 guessed the drawing no. / revision: not in the prompt)
     for kind in ("rail_level", "formation_level", "top_of_box_level", "soffit_level", "bed_level", "founding_level"):
         v, ls = first_level(a, kind)
         if v:
@@ -746,6 +822,179 @@ def qa_reason(a):
     return out
 
 
+FLAG = re.compile(r"\bNOT\b|worth checking|needs checking|less than \d")
+
+
+def _set_value(text, new):
+    """'0.811m' -> '1.211m': the number replaced, its unit and spacing kept."""
+    return re.sub(r"-?\d+(?:\.\d+)?", new, text, count=1)
+
+
+def qa_reason_flags(a):
+    """Checks that must NOT agree: a copy of the GAD's facts with one value changed (a table value, the formation level,
+    the box's concrete grade, the box size at the 4 m limit, the founding pressure), and the worked check on it.
+    v1 learnt mostly agreeing checks and once invented an HFL to make one agree; these teach it to flag instead.
+    Returns [(task, question, answer, refs, changed annotation)] - train / validation only, never the test GADs."""
+    import copy
+    out = []
+
+    def run(mod, keyword):
+        for task, q, ans, refs in qa_reason(mod):
+            if keyword in ans.lower() and FLAG.search(ans):
+                out.append((task, q, ans, refs, mod))
+                return
+
+    C = (a["tables"].get("comparative_table") or {}).get("rows", [])
+    for kind, keyword in (("vertical_clearance", "vertical clearance"), ("free_board", "free board"),
+                          ("height_of_water", "height (depth) of water"), ("max_scour_level", "scour level")):
+        r = next((r for r in C if r.get("kind") == kind and num(r.get("proposed")) is not None), None)
+        if not r:
+            continue
+        mod = copy.deepcopy(a)
+        rr = next(x for x in mod["tables"]["comparative_table"]["rows"] if x.get("kind") == kind)
+        d = rng.choice([-1, 1]) * rng.uniform(0.15, 0.8)
+        rr["proposed"] = _set_value(rr["proposed"], f"{num(rr['proposed']) + d:.3f}")
+        run(mod, "height of water" if kind == "height_of_water" else keyword)
+    td = (a["tables"].get("track_details") or {}).get("rows", [])
+    fl = next((r for r in td if r.get("kind") == "formation_level" and num(r.get("proposed")) is not None), None)
+    if fl:
+        mod = copy.deepcopy(a)
+        rr = next(x for x in mod["tables"]["track_details"]["rows"] if x.get("kind") == "formation_level")
+        rr["proposed"] = _set_value(rr["proposed"], f"{num(rr['proposed']) - rng.uniform(0.05, 0.25):.3f}")
+        run(mod, "track structure")
+    spec_i = next((i for i, x in enumerate(a["notes"].get("specifications", [])) if re.search(r"GRADE\s+OF\s+RCC\s+BOX", x["item"], re.I)
+                   and x.get("value") and re.search(r"M\s*-?\s*3[05]", x["value"])), None)
+    if spec_i is not None:
+        mod = copy.deepcopy(a)
+        sp = mod["notes"]["specifications"][spec_i]
+        sp["value"] = re.sub(r"3[05]", lambda m: "30" if m.group() == "35" else "35", sp["value"], count=1)
+        run(mod, "concrete")
+    bx = a["bridge"].get("box")
+    if bx and spec_i is not None:
+        # the 4 m limit: exactly 4 is not more than 4
+        w = rng.choice([4.0, 3.98, 4.05, 4.0])
+        mod = copy.deepcopy(a)
+        b2 = mod["bridge"]["box"]
+        old = b2["as_printed"].rstrip("mM ")
+        b2["clear_width_m"], b2["clear_height_m"] = w, min(b2["clear_height_m"], 3.9)
+        new = f"{b2['cells']}x{w:.3f}x{b2['clear_height_m']:.3f}"
+        b2["as_printed"] = new + "m"
+        for holder, key in ((mod["bridge"], "description"), (mod["title_block"], "title")):
+            if holder.get(key):
+                holder[key] = holder[key].replace(old, new)
+        need = "M35" if w > 4 else "M30"
+        sp = mod["notes"]["specifications"][spec_i]
+        sp["value"] = re.sub(r"3[05]", "30" if need == "M35" else "35", sp["value"], count=1)    # the wrong one
+        run(mod, "concrete")
+    notes = a["notes"].get("notes", []) + a["notes"].get("special_note", [])
+    pn = next((it for it in notes if re.search(r"FOUNDING\s+PRESSURE\s+OF\s+(?:THE\s+)?RCC\s+BOX\s*=\s*\d", it["text"], re.I)), None)
+    bl = next((b for b in a["bore_logs"] if any(x.get("depth_m") is not None for x in b["sbc"])), None)
+    if pn and bl:
+        top = max(x["sbc_t_per_m2"] for x in bl["sbc"])
+        mod = copy.deepcopy(a)
+        for key in ("notes", "special_note"):
+            for it in mod["notes"].get(key, []):
+                if it["text"] == pn["text"]:
+                    it["text"] = re.sub(r"(=\s*)(\d+(?:\.\d+)?)", lambda m: m.group(1) + f"{top + rng.uniform(3, 15):.2f}", it["text"], count=1)
+        run(mod, "founding pressure")
+    return out
+
+
+def qa_multi(a):
+    """Questions that need several facts at once: all the levels, the existing vs the proposed bridge, the hydraulic data,
+    the box's levels top to bottom with the heights between them."""
+    out = []
+    parts, refs = [], []
+    for kind in ("rail_level", "formation_level", "top_of_box_level", "soffit_level", "bed_level", "founding_level"):
+        for st in ("existing", "proposed"):
+            v, ls = first_level(a, kind, st)
+            if v is not None and ls and (ls[0]["status"] == st or st == "proposed"):
+                parts.append(f"{st} {KIND_NAME[kind]} {lv(v)} m")
+                refs.append(("level", ls[0]["label"], ls[0]["value"]))
+    hv, hls = first_level(a, "hfl", status=None)
+    if hv is not None:
+        parts.append(f"HFL {lv(hv)} m")
+        refs.append(("level", hls[0]["label"], hls[0]["value"]))
+    if len(parts) >= 3:
+        out.append(("qa_multi", vary(rng.choice(["List all the levels on this GAD.", "Give me all the existing and proposed levels.",
+                                                  "What are the important levels of the bridge?"])),
+                    "The levels on the drawing: " + "; ".join(parts) + ".", refs))
+    rows = (a["tables"].get("comparative_table") or {}).get("rows", [])
+    cmp_rows = [r for r in rows if r.get("kind") in ("span", "superstructure", "substructure", "foundation") and (r.get("existing") or r.get("proposed"))]
+    if cmp_rows:
+        ans = "From the comparative table, existing vs proposed: " + "; ".join(
+            f"{r['description'].lower()}: {r.get('existing') or '(blank)'} -> {r.get('proposed') or '(blank)'}" for r in cmp_rows) + "."
+        out.append(("qa_multi", vary(rng.choice(["Compare the existing and the proposed bridge.", "What changes from the existing bridge to the new one?",
+                                                  "How is the proposed bridge different from the existing one?"])),
+                    ans, [("table", "comparative_table", r["description"]) for r in cmp_rows]))
+    hyd = [r for r in rows if r.get("kind") in ("catchment_area", "design_discharge", "velocity", "observed_hfl", "calculated_hfl", "hfl",
+                                                "vertical_clearance", "free_board", "max_scour_depth", "max_scour_level", "height_of_water",
+                                                "waterway_required") and r.get("proposed")]
+    if len(hyd) >= 3:
+        out.append(("qa_multi", vary(rng.choice(["Give me the hydraulic data of the bridge.", "Summarize the hydraulic particulars.",
+                                                  "What are the discharge, velocity and flood levels?"])),
+                    "The hydraulic data (proposed bridge): " + "; ".join(f"{r['description'].lower()} {r['proposed']}" for r in hyd) + ".",
+                    [("table", "comparative_table", r["description"]) for r in hyd]))
+    tob, tobs = first_level(a, "top_of_box_level")
+    sof, sofs = first_level(a, "soffit_level")
+    fdn, fdns = first_level(a, "founding_level")
+    fl, fls = first_level(a, "formation_level")
+    if tob is not None and sof is not None and fdn is not None:
+        ans = (f"Top to bottom (proposed): " + (f"formation {lv(fl)} m, then {fl - tob:.3f} m of cushion to " if fl is not None else "")
+               + f"the top of the box {lv(tob)} m; the top slab down to the soffit {lv(sof)} m ({tob - sof:.3f} m); the founding level "
+               f"{lv(fdn)} m, {tob - fdn:.3f} m below the top of the box. These differences are my calculation from the printed levels.")
+        out.append(("qa_multi", vary(rng.choice(["Explain the levels of the box from top to bottom.", "How deep is the box below the formation?",
+                                                  "Walk me through the box's levels."])),
+                    ans, [("level", x[0]["label"], x[0]["value"]) for x in (tobs, sofs, fdns, fls) if x]))
+    return out
+
+
+DISTRACTORS = ["a public transit company", "a stock-exchange ticker symbol", "a football club", "a chemical compound",
+               "a software product", "a television channel", "an airline code"]
+
+
+def qa_other(a):
+    """Values printed with a label the reader has no rule for ("LTC = 120 M", "Vmax = 130 KMPH", "HC = 7.8"): never
+    dropped. What the label means comes from the glossary, a web search for the term (at question time), or nowhere -
+    and the answer says which. The web results are simulated here (the dataset needs no internet): one that fits, one
+    about something else (abbreviations are ambiguous: "LTC" finds the London Transit Commission), or none.
+    Returns [(task, question, answer, refs, annotation with the simulated meaning)]."""
+    import copy
+    import glossary
+    out, seen = [], set()
+    vals = [o for o in a.get("other_values", []) if glossary.key(o["label"]) not in seen and not seen.add(glossary.key(o["label"]))]
+    for o in rng.sample(vals, min(4, len(vals))):
+        k = glossary.key(o["label"])
+        val = f"{o['value']:g}" + (f" {o['unit'].lower()}" if o.get("unit") else "")
+        where = f"'{o['label']} = {val}' is printed on the {o['view']}"
+        ref = [("other", o["label"], o["value"])]
+
+        def ask():
+            return vary(rng.choice([f"What is {o['label']} on this drawing?", f"What does {o['label']} = {val} mean?",
+                                    f"What is the {o['label']} value and what does it denote?", f"Explain {o['label']}."]))
+        known, src = glossary.meaning(o["label"])
+        # each value twice: as the glossary knows it, and once as if it were new to the reader (a simulated lookup)
+        if known:
+            out.append(("qa_other", ask(), f"{where}. {o['label']} is the {known}.", ref, a))
+        mod = copy.deepcopy(a)
+        mod["_meanings"] = dict(a.get("_meanings") or {})
+        r = rng.random()
+        if known and r < 0.4:
+            mod["_meanings"][k] = (f"{o['label']}: {known} (en.wikipedia.org)", "web")
+            ans = (f"{where}. {o['label']} is not in my glossary; a web search for the term suggests it means the {known}. That fits this "
+                   f"drawing, but it is from the web and not confirmed by the drawing - please check it (and add it to the glossary if right).")
+        elif r < 0.75:
+            d = rng.choice(DISTRACTORS)
+            mod["_meanings"][k] = (f"{o['label']} may refer to {d} (en.wikipedia.org)", "web")
+            ans = (f"{where}. Its meaning is not in my glossary, and a web search for '{o['label']}' only found {d}, which does not fit a "
+                   f"railway drawing - so I can't say what it denotes here. Please ask the drawing office (and add it to the glossary).")
+        else:
+            mod["_meanings"][k] = (None, "unknown")
+            ans = (f"{where}, but its meaning is not in my glossary and a web search found nothing, so I can't say what it denotes. "
+                   f"Please ask the drawing office (and add it to the glossary).")
+        out.append(("qa_other", ask(), ans, ref, mod))
+    return out
+
 def qa_components(a):
     """What each part of the box shown on the drawing is, why it is there, and where the drawing shows it."""
     out = []
@@ -794,6 +1043,364 @@ def qa_absent(a):
             continue
         out.append(("qa_absent", vary(q), ans, []))
     return out
+
+
+# ======================================================================== anything written on the sheet, centre lines, "why"
+def loose_view(title):
+    """How people name a view when they ask: 'half bottom plan', 'section A-A', 'sectional elevation' ..."""
+    t = title.lower()
+    alts = [t, t.split(" / ")[0], re.sub(r"\bsectional elevation at\b", "section", t), re.sub(r"\s*/\s*", " / ", t),
+            re.sub(r"\bhalf top plan\b", "half section plan", t)]
+    return rng.choice([x for x in alts if x])
+
+
+def colour_phrase(a, colour):
+    cw = FX.colour_words(a, colour)
+    return f" (drawn in {cw})" if cw else ""
+
+
+def qa_callouts(a):
+    """Any text written on the views - what it is, where it is, and 'is X on view Y?' answered from where it really is."""
+    out = []
+    idx = FX.callout_index(a)
+    if not idx:
+        return out
+    kinds = {v["title"]: v["kind"] for v in a["views"]}
+    texts = [t for t in idx if not all(kinds.get(v) == "bore_log" for v, _ in idx[t]) and not re.match(r"^SBC\s*=", t, re.I)]
+    if not texts:
+        return out
+    long_first = sorted(texts, key=lambda t: -len(t.split()))
+    pick = list(dict.fromkeys(long_first[:4] + rng.sample(texts, min(5, len(texts)))))
+    all_views = [v["title"] for v in a["views"]]
+    for t in pick:
+        where = idx[t]
+        views = list(dict.fromkeys(v for v, _ in where))
+        ans = f"'{t}' is written on the {', '.join(views[:4])}{colour_phrase(a, where[0][1])}."
+        refs = [("call", t)]
+        comp = FX.component_of(t)
+        if comp:
+            ans += f" It refers to the {comp[0]}: {comp[1]}"
+        dim = next((d for d in a["labelled_dims"] if d["label"] == t), None)
+        if dim:
+            ans += f" It also gives a dimension: {fnum_mm(dim['value'])} - {dim['meaning']}."
+            refs.append(("dim", dim["label"], dim["value"]))
+        dis = next((d for d in a.get("dismantle", []) if d["text"] == t), None)
+        if dis:
+            ans += (" It marks part of the existing structure that is to be removed (its arrows point at the parts drawn as dismantling "
+                    "works); ask 'why' for the reason read from the drawing.")
+        v0 = rng.choice(views)
+        words = t.split()
+        part = " ".join(words[: max(2, min(4, len(words) - 1))]) if len(words) >= 4 and rng.random() < 0.4 else t
+        q = rng.choice([f"What is {part} on {loose_view(v0)}?", f"What does '{part}' mean?", f"Where is {part.lower()} shown?",
+                        f"{part} on {loose_view(v0)}", f"Explain {part.lower()}.", f"What is {part.lower()}?"])
+        out.append(("qa_callout", vary(q), ans, refs))
+        # asked on a view where it is not written: say where it is (v1 said "not on the drawing")
+        others = [v for v in all_views if v not in views]
+        if others and rng.random() < 0.5:
+            vo = rng.choice(others)
+            out.append(("qa_callout", vary(rng.choice([f"Is {t} shown on {loose_view(vo)}?", f"What is {t} on {loose_view(vo)}?"])),
+                        f"'{t}' is not written on the {vo}; it is on the {', '.join(views[:4])}{colour_phrase(a, where[0][1])}."
+                        + (f" It refers to the {comp[0]}: {comp[1]}" if comp else ""), refs))
+    return out
+
+
+def fnum_mm(v):
+    return f"{v:g} mm"
+
+
+def qa_centre_lines(a):
+    """'What is the value of CL OF EXISTING UP TRACK?' - a centre line has no value; the distances from it do."""
+    out = []
+    links = FX.centre_line_links(a)
+    cls = list(dict.fromkeys((c["name"], c["view"]) for c in a.get("centre_lines", []) if c.get("view")))
+    for name, view in rng.sample(cls, min(4, len(cls))):
+        lk = links.get((view, name), [])
+        ans = f"The centre line of {name} (on the {view}) is a reference line - it has no value of its own."
+        if lk:
+            ans += " The distances from it on this view: " + "; ".join(
+                f"{v:g} mm to the centre line of {o}" + (" (an unlabelled dimension whose two ends are on these centre lines)" if how == "unlabelled dimension"
+                                                       else f" ({how})") for o, v, how in lk) + "."
+        else:
+            ans += " No distance from it to another centre line is written on this view."
+        q = rng.choice([f"What is the value of CL OF {name}?", f"C/L of {name} on {loose_view(view)}?", f"What is the value of C OF {name} on {loose_view(view)}",
+                        f"What is the track centre distance of {name.lower()}?", f"centre line of {name.lower()}"])
+        out.append(("qa_cl", vary(q), ans, [("cl", name, view)]))
+        for o, v, how in lk[:2]:
+            if rng.random() < 0.6:
+                src = ("an unlabelled dimension: its dimension line runs between the two centre lines" if how == "unlabelled dimension" else how)
+                out.append(("qa_cl", vary(rng.choice([f"What is the distance between {name} and {o}?", f"Distance from C/L of {name.lower()} to {o.lower()}?",
+                                                       f"track centres between {name.lower()} and {o.lower()} on {loose_view(view)}"])),
+                            f"{v:g} mm between the centre lines of {name} and {o} on the {view} ({src}).", [("cl", name, view), ("cl", o, view)]))
+    return out
+
+
+def relation_words(b):
+    rel = b.get("relation_to_existing") or ""
+    m = re.search(r"ON\s+(D/S|U/S)\s+OF\s+(EXISTING\s+BRIDGE\s+NO\.?\s*[\w/ .-]+?)\s*(\(.*)?$", rel, re.I)
+    if not m:
+        return None
+    side = "downstream (D/S)" if m.group(1).upper() == "D/S" else "upstream (U/S)"
+    return f"on the {side} side of {m.group(2).strip().lower().replace('existing bridge', 'existing bridge')}"
+
+
+def qa_why(a):
+    """'Why ...?' answered from what the drawing shows - the legend, the title, the tables, the notes, the levels - and,
+    where the drawing holds no reason, saying so and giving what it does show."""
+    out = []
+    b = a["bridge"]
+    rel = relation_words(b)
+    C = "comparative_table"
+    # ---- why is this dismantled
+    for d in a.get("dismantle", [])[:2]:
+        bits = []
+        if d.get("short_strokes"):
+            lk = next((k for k in a["notes"].get("legend_key", []) if re.search(r"DISMANT|DIAMANT", k["label"], re.I)), None)
+            bits.append("parts drawn " + (f"as the legend's '{lk['label']}' ({lk['colour']} {lk['style']} lines)" if lk else "in short dashes / strokes"))
+        if d.get("angled"):
+            bits.append("angled walls at the end of the existing structure (the existing wing walls)")
+        if d.get("parts"):
+            bits.append("labelled " + " / ".join(f"'{p}'" for p in d["parts"]))
+        ans = f"The note '{d['text']}' on the {d['view']} marks part of the existing structure to be removed"
+        ans += (": its arrows point at " + "; ".join(bits) + "." if bits else ".")
+        if rel:
+            ans += f" The new box is built {rel} (as the title says), right against it"
+            ans += ", and the proposed work (red) is drawn right where the arrows point." if d.get("proposed_next_to") else "."
+            ans += (" So the existing parts that stand where the new box goes, or where it joins the existing bridge, have to be taken down "
+                    "to make room for the new box and to connect the two.")
+        elif d.get("proposed_next_to"):
+            ans += (" Proposed work (red) is drawn right where the arrows point, so the existing part is removed to make room for it.")
+        else:
+            ans += " The drawing does not show what replaces it there, so the reason cannot be read from it."
+        ans += " The drawing does not write the reason in words; this is read from what is drawn."
+        q = rng.choice(["Why does it need to be dismantled?", "Why is this to be dismantled?", f"Why dismantle the part marked on the {loose_view(d['view'])}?",
+                        "What is to be dismantled and why?", "why to be dismantled"])
+        out.append(("qa_why", vary(q), ans, ["bridge", ("call", d["text"]), ("legend_key",)]))
+    # ---- which HFL the design uses, and why
+    hfls = {}
+    for kind, name in (("observed_hfl", "OHFL"), ("calculated_hfl", "CHFL")):
+        r = trow(a, C, kind)
+        if r and num(r.get("proposed")) is not None:
+            hfls[name] = (num(r["proposed"]), tref(C, r))
+    vc, sof = trow(a, C, "vertical_clearance"), first_level(a, "soffit_level")
+    if len(hfls) == 2 and vc and num(vc.get("proposed")) is not None and sof[0] is not None:
+        used = next((n for n, (v, _) in hfls.items() if abs(sof[0] - v - num(vc["proposed"])) < 0.006), None)
+        (o_v, _), (c_v, _) = hfls["OHFL"], hfls["CHFL"]
+        refs = [tref(C, vc), hfls["OHFL"][1], hfls["CHFL"][1], ("level", sof[1][0]["label"], sof[1][0]["value"])]
+        if abs(o_v - c_v) < 0.0005:
+            ans = f"The OHFL and the CHFL are the same here ({o_v:.3f} m), so the clearance and free board come out the same with either."
+        elif used:
+            other = "CHFL" if used == "OHFL" else "OHFL"
+            uv, ov = hfls[used][0], hfls[other][0]
+            ans = (f"The table's vertical clearance is worked out from the {used} ({uv:.3f} m), not the {other} ({ov:.3f} m): soffit "
+                   f"{sof[0]:.3f} - {uv:.3f} = {sof[0] - uv:.3f} m, as the table gives ({vc['proposed']}). ")
+            ans += (f"The {used} is the higher of the two (by {abs(uv - ov):.3f} m): designing for the higher flood level is the safe "
+                    "choice, since it gives the smaller clearance and free board. " if uv > ov else
+                    f"The {used} is the lower of the two (by {abs(uv - ov):.3f} m) - the higher flood level would be the safe choice, so "
+                    "this is worth confirming. ")
+            ans += "The drawing does not write the reason; this is read from its values."
+        else:
+            ans = (f"The table's vertical clearance ({vc['proposed']}) does not follow from either HFL with the soffit level {sof[0]:.3f} m "
+                   f"(OHFL {o_v:.3f}, CHFL {c_v:.3f}), so the drawing does not show which one was used - worth checking.")
+        out.append(("qa_why", vary(rng.choice(["Why was CHFL taken instead of OHFL?", "Which HFL is used for design and why?",
+                                                "Why is the OHFL not used?", "why chfl and not ohfl"])), ans, refs))
+    # ---- why the box size differs from the existing opening
+    sp = trow(a, C, "span")
+    if sp and sp.get("existing") and sp.get("proposed"):
+        ex, pr = sp["existing"], sp["proposed"]
+        ans = f"The comparative table gives the existing opening as {ex} and the proposed box as {pr}"
+        ans += " - the same size." if re.sub(r"\s", "", ex.lower()) == re.sub(r"\s", "", pr.lower()) else "."
+        req, how = trow(a, C, "waterway_required"), trow(a, C, "height_of_water")
+        bx = b.get("box")
+        refs = [tref(C, sp)]
+        if req and num(req.get("proposed")) and bx and how and num(how.get("proposed")):
+            area = bx["cells"] * bx["clear_width_m"] * num(how["proposed"])
+            ans += (f" The waterway required is {req['proposed']}; the proposed box gives about {bx['cells']} x {bx['clear_width_m']:g} m x "
+                    f"{num(how['proposed']):g} m (height of water) = {area:.2f} sq.m of opening below the flood level - "
+                    + ("enough." if area >= num(req["proposed"]) else "LESS than required; worth checking."))
+            refs += [tref(C, req), tref(C, how)]
+        ans += (" The drawing does not write why this size was chosen; the reason would be in the hydraulic and design calculations, "
+                "which are not on the GAD.")
+        out.append(("qa_why", vary(rng.choice(["Why is the proposed box size different from the existing?", "Why this box size?",
+                                                "Why did the span change?", "Why was this opening chosen?"])), ans, refs))
+    # ---- why a proposed level differs from the existing one
+    for kind in ("rail_level", "formation_level", "soffit_level", "bed_level"):
+        e, es = first_level(a, kind, "existing")
+        p, ps = first_level(a, kind, "proposed")
+        if e is None or p is None or not es or es[0]["status"] != "existing" or abs(e - p) < 0.0005:
+            continue
+        name = KIND_NAME[kind]
+        ans = (f"The existing {name} is {e:.3f} m and the proposed {name} is {p:.3f} m - the proposed is {abs(p - e):.3f} m "
+               f"{'higher' if p > e else 'lower'}. The GAD does not write why. ")
+        ans += ("The proposed rail and formation levels come from the new line's own longitudinal profile (its L-section); the GAD only "
+                "shows them at this bridge." if kind in ("rail_level", "formation_level") else
+                "The proposed box's levels follow from its own size and foundation, worked out in the design; the GAD only prints them.")
+        out.append(("qa_why", vary(rng.choice([f"Why is the proposed {name} different from the existing?", f"Why did the {name} change?",
+                                                f"why is new {name} not same as old"])), ans,
+                    [("level", es[0]["label"], es[0]["value"]), ("level", ps[0]["label"], ps[0]["value"])]))
+        break
+    # ---- why this concrete grade
+    notes = a["notes"].get("notes", []) + a["notes"].get("special_note", [])
+    gnote = next((it for it in notes if re.search(r"M\s*-?\s*35.*SPAN\s+OR\s+HEIGHT", it["text"], re.I)), None)
+    spec = next((s for s in a["notes"].get("specifications", []) if re.search(r"GRADE\s+OF\s+RCC\s+BOX", s["item"], re.I) and s.get("value")), None)
+    bx = b.get("box")
+    if gnote and spec and bx:
+        mx = max(bx["clear_width_m"], bx["clear_height_m"])
+        need = "M35" if mx > 4 else "M30"
+        ok = re.sub(r"[\s-]", "", spec["value"].upper()).startswith(need)
+        ans = (f"Because of note {gnote['no']}: M35 is used when the span or height of the box is more than 4 m, M30 otherwise. This box is "
+               f"{bx['clear_width_m']:g} m wide and {bx['clear_height_m']:g} m high; the larger, {mx:g} m, is {'more' if mx > 4 else 'not more'} "
+               f"than 4 m, so {need}. The specifications give {spec['value']}" + (" - as the note asks." if ok else " - NOT what the note asks; worth checking."))
+        out.append(("qa_why", vary(rng.choice([f"Why is {spec['value']} used for the box?", "Why this concrete grade?", f"why {need.lower()}"])),
+                    ans, ["bridge", ("notes", gnote["no"], gnote["text"][:30]), ("spec", spec["item"])]))
+    # ---- why the foundation is at this level
+    fdn, fdns = first_level(a, "founding_level")
+    bed_r, sl_r = trow(a, C, "bed_level"), trow(a, C, "max_scour_level")
+    if fdn is not None and bed_r and num(bed_r.get("proposed")) is not None:
+        bed = num(bed_r["proposed"])
+        ans = f"The drawing does not write why. What it shows: the founding level {fdn:.3f} m is {bed - fdn:.3f} m below the bed level {bed:.3f} m"
+        refs = [("level", fdns[0]["label"], fdns[0]["value"]), tref(C, bed_r)]
+        if sl_r and num(sl_r.get("proposed")) is not None:
+            sl = num(sl_r["proposed"])
+            ans += (f", and {abs(sl - fdn):.3f} m {'below' if fdn < sl else 'above'} the maximum scour level {sl:.3f} m in the table"
+                    + (" - so the flood's scour does not reach under it" if fdn < sl else
+                       " - the box floor is protected from scour by the drop / curtain walls, which go deeper") + ".")
+            refs.append(tref(C, sl_r))
+        else:
+            ans += "."
+        pn = next((it for it in notes if re.search(r"FOUNDING\s+PRESSURE", it["text"], re.I)), None)
+        if pn:
+            ans += f" Note {pn['no']} gives the founding pressure the soil there must carry ({pn['text'][:90].strip()})."
+            refs.append(("notes", pn["no"], pn["text"][:30]))
+        out.append(("qa_why", vary(rng.choice(["Why is the founding level here?", "Why is the foundation at this depth?", "why this fdn level"])), ans, refs))
+    # ---- why a part is provided
+    comps = FX.components(a)
+    for name, what, views, _ in rng.sample(comps, min(2, len(comps))):
+        out.append(("qa_why", vary(rng.choice([f"Why is the {name} provided?", f"Why is there a {name}?", f"why {name}"])),
+                    f"The {name} is {what} " + (f"On this drawing it is shown on {', '.join(views[:3])}." if views else "It is mentioned in the notes."),
+                    [("comp", name)]))
+    # ---- why two values for the same level
+    groups = defaultdict(list)
+    for l in a["levels"]:
+        if l["kind"] != "reduced_level":
+            groups[(l["kind"], l["status"])].append(l)
+    multi = [(k, ls) for k, ls in groups.items() if len({x["value"] for x in ls}) > 1]
+    if multi:
+        (kind, st), ls = rng.choice(multi)
+        vals = defaultdict(list)
+        for l in ls:
+            vals[l["value"]].append(l)
+        parts = [f"{v:.3f} m ('{xs[0]['label']}' on {FX.view_name(xs[0]['view'])}" + (f", {xs[0]['element']}" if xs[0].get("element") else "") + ")" for v, xs in vals.items()]
+        els = {xs[0].get("element") for xs in vals.values()}
+        name = (f"{st} " if st else "") + KIND_NAME.get(kind, kind)
+        ans = f"The drawing gives {len(vals)} values for the {name}: " + "; ".join(parts) + ". "
+        ans += ("They belong to different parts, so different values are expected." if len(els) == len(vals) and None not in els else
+                "The drawing does not say why they differ; if they are for the same part, one may be a drafting error - worth checking.")
+        out.append(("qa_why", vary(rng.choice([f"Why are there two values for the {name}?", f"Why does the {name} differ between views?"])), ans,
+                    [("level", xs[0]["label"], v) for v, xs in vals.items()]))
+    # ---- whys the drawing holds no answer to
+    if bx:
+        w2 = bx["clear_width_m"] + rng.choice([0.5, 1.0])
+        req = trow(a, C, "waterway_required")
+        ans = (f"The drawing does not say why {bx['clear_width_m']:g} m was chosen rather than {w2:g} m; that choice is made in the hydraulic "
+               "and design calculations, which are not on the GAD.")
+        if req and req.get("proposed"):
+            ans += f" What the drawing does show: the waterway required is {req['proposed']} (comparative table)."
+        out.append(("qa_why", vary(f"Why was a clear width of {bx['clear_width_m']:g} m chosen instead of {w2:g} m?"), ans,
+                    ["bridge"] + ([tref(C, req)] if req else [])))
+    if b.get("chainage"):
+        out.append(("qa_why", vary(rng.choice([f"Why is the bridge at CH {b['chainage']}?", "Why was this location chosen for the bridge?"])),
+                    f"The drawing does not say why. It gives the location - CH {b['chainage']}" + (f", {rel}" if rel else "")
+                    + " - but the reason for a bridge at a place (the stream or road it crosses) is not written on the GAD.", ["bridge"]))
+    return out
+
+
+def img_spot_rows(a, page, gid):
+    """A crop of the drawing around what a question is about (as ask_gad sends it), with the facts and the question: the
+    model learns to look at the spot itself - arrows, circles, colours, what is next to it - not only at the facts."""
+    rows = []
+    tile_pt = TILE * 72 / DPI
+    cands = []
+    for v in a["views"]:
+        for c in v.get("callouts", []):
+            if isinstance(c, dict) and c.get("bbox"):
+                cands.append(("call", c["text"], c["bbox"], v["title"]))
+    for d in a["dims"]:
+        if FX.dim_span(d):
+            cands.append(("pdim", d, d["bbox"], d["view"]))
+    for d in a.get("dismantle", []):
+        cands.append(("dis", d, d["bbox"], d["view"]))
+    if not cands:
+        return rows
+    pri = [c for c in cands if c[0] in ("dis", "pdim") and (c[0] == "dis" or c[1].get("circles") or any(e.get("centre_line") for e in c[1].get("ends", [])))]
+    pick = pri[:4] + rng.sample(cands, min(4, len(cands)))
+    seen = set()
+    for kind, it, bb, view in pick:
+        key = (kind, str(bb))
+        if key in seen:
+            continue
+        seen.add(key)
+        cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+        clip = (cx - tile_pt * rng.uniform(0.35, 0.65), cy - tile_pt * rng.uniform(0.35, 0.65))
+        clip = (clip[0], clip[1], clip[0] + tile_pt, clip[1] + tile_pt)
+        if kind == "call":
+            qa = [x for x in qa_callouts_for(a, it) if x]
+        elif kind == "pdim":
+            qa = [plain_answer(a, it)]
+        else:
+            qa = [x for x in qa_why(a) if x[2].startswith(f"The note '{it['text']}'")][:1]
+        if not qa:
+            continue
+        task, q, ans, refs = qa[0]
+        im, _ = render(page, clip, dpi=DPI)
+        path = save(im, f"{gid}_spot{len(rows)}")
+        q = rng.choice([f"(Crop of the {view}.) ", "This is a crop of the GAD. ", ""]) + q
+        rows.append(("img_spot", path, q, ans, refs))
+    return rows
+
+
+def qa_callouts_for(a, text):
+    idx = FX.callout_index(a)
+    where = idx.get(text)
+    if not where:
+        return []
+    views = list(dict.fromkeys(v for v, _ in where))
+    ans = f"'{text}' is written on the {', '.join(views[:4])}{colour_phrase(a, where[0][1])}."
+    comp = FX.component_of(text)
+    if comp:
+        ans += f" It refers to the {comp[0]}: {comp[1]}"
+    dim = next((d for d in a["labelled_dims"] if d["label"] == text), None)
+    refs = [("call", text)]
+    if dim:
+        ans += f" It also gives a dimension: {fnum_mm(dim['value'])} - {dim['meaning']}."
+        refs.append(("dim", dim["label"], dim["value"]))
+    return [("qa_callout", vary(rng.choice([f"What is {text.lower()}?", "What is written here and what does it mean?", f"Explain {text.lower()}."])), ans, refs)]
+
+
+def plain_answer(a, d):
+    """The answer for an unlabelled dimension with its ends found (qa_plain's wording)."""
+    v, view, ends = f"{d['value']:g}", d["view"], d.get("ends") or []
+    sp = FX.dim_span(d)
+    if d.get("circles"):
+        c = d["circles"]
+        what = f"the circles of the {c['name']}" if c.get("name") else "the circles drawn there"
+        ans = (f"{v} mm on the {view} is not labelled, but its dimension line " + sp + ". So " +
+               (f"{v} mm is the diameter of {what}." if c["measures"] == "diameter" else f"{v} mm is the centre-to-centre spacing of {what}.")
+               + " (Read from the drawing's lines.)")
+    elif len(ends) == 2 and all(e.get("centre_line") for e in ends):
+        ans = (f"{v} mm on the {view} is not labelled, but its dimension line {sp}, so it is the distance between those two centre lines "
+               f"({ends[0]['centre_line'].lower()} to {ends[1]['centre_line'].lower()}).")
+    elif sp.startswith("has both ends"):
+        ans = (f"{v} mm on the {view} is not labelled. Its dimension line {sp}, so it measures something at that spot - such as a "
+               f"thickness or a short width or step there; the drawing does not say exactly what.")
+    elif sp.startswith("runs from"):
+        ans = (f"{v} mm on the {view} is not labelled. Its dimension line {sp}, so it most likely measures the distance between those "
+               f"points - read from the drawing's lines, not written on the drawing.")
+    else:
+        ans = (f"{v} mm on the {view} is not labelled. Its dimension line {sp}, so I can only say where it starts - the drawing does "
+               f"not show what the other end is.")
+    q = rng.choice([f"What does {v} on the {loose_view(view)} measure?", f"What is the {v} dimension?", f"{v} on {loose_view(view)} - what is it?",
+                    f"What does the dimension {v} denote?", f"what is {v}"])
+    return ("qa_plain_dim", vary(q), ans, [("pdim", view, d["value"])])
 
 
 # ======================================================================== images
@@ -884,6 +1491,8 @@ def img_rows(a):
             ans = {"view": v["title"], "levels": L, "labelled_dimensions": D, "other_dimension_figures_mm": sorted({p["value"] for p in plain})}
             q = rng.choice(["Read the labelled levels and dimensions that are fully visible in this crop of a GAD, as JSON.",
                             "List every level and labelled dimension fully visible in this part of the drawing (JSON), with what each means."])
+            if rng.random() < 0.8:                 # the tool knows which view a crop is from (v1 misnamed it without)
+                q = f"This crop is from the {v['title']} of the GAD. " + q
             rows.append(("img_tile", path, q, json.dumps(ans, ensure_ascii=False), []))
     # tables and title block
     for p in a.get("panel", []):
@@ -908,12 +1517,13 @@ def img_rows(a):
              "track_details": "Read the track details table as JSON.", "specifications": "Read the specifications as JSON.",
              "depth_of_track_structure": "Read the depth of track structure as JSON.", "title_block": "Read the title block of this GAD as JSON."}[p["kind"]]
         rows.append(("img_table", path, q, json.dumps(ans, ensure_ascii=False), []))
+    rows += img_spot_rows(a, page, gid)
     return rows
 
 
 # ======================================================================== assemble
 def make_row(gid, split, task, n, question, answer, a, refs, image=None):
-    prompt = FX.prompt(a, question, must=refs) if task.startswith(("qa_", "img_view_facts")) else question
+    prompt = FX.prompt(a, question, must=refs) if task.startswith(("qa_", "img_view_facts", "img_spot")) else question
     content = ([{"type": "image"}] if image else []) + [{"type": "text", "text": prompt}]
     row = {"id": f"{gid}_{task}_{n:03d}", "gad": gid, "split": split, "task": task,
            "messages": [{"role": "user", "content": content}, {"role": "assistant", "content": [{"type": "text", "text": answer}]}]}
@@ -934,12 +1544,22 @@ def main():
         split = "test" if gid in TEST_GADS else "val" if gid in VAL_GADS else "train"
         facts = FX.all_facts(a)
         qa = (qa_levels(a) + qa_values(a, facts) + qa_dims(a) + qa_plain(a) + qa_tables(a) + qa_notes(a) + qa_abbr(a) + qa_title(a)
-              + qa_revisions(a) + qa_keyplan(a) + qa_bands(a) + qa_bore(a) + qa_views(a) + qa_findings(a) + qa_computed(a) + qa_reason(a) + qa_components(a) + qa_summary(a) + qa_absent(a))
+              + qa_review(a) + qa_revisions(a) + qa_keyplan(a) + qa_bands(a) + qa_bore(a) + qa_views(a) + qa_findings(a) + qa_computed(a) + qa_reason(a) + qa_multi(a) + qa_components(a) + qa_summary(a) + qa_absent(a)
+              + qa_callouts(a) + qa_centre_lines(a) + qa_why(a))
         seen_qa = set()                                  # the same question with the same answer once per GAD
         qa = [x for x in qa if (x[1].lower().rstrip("?"), x[2]) not in seen_qa and not seen_qa.add((x[1].lower().rstrip("?"), x[2]))]
         for n, (task, q, ans, refs) in enumerate(qa):
             out[split].append(make_row(gid, split, task, n, q, ans, a, refs))
             stats[task] += 1
+        for n, (task, q, ans, refs, mod) in enumerate(qa_other(a)):
+            out[split].append(make_row(gid, split, task, 450 + n, q, ans, mod, refs))
+            stats[task] += 1
+        if split != "test":                              # checks on changed copies: never on the held-out GADs
+            flags = qa_reason_flags(a)
+            flags = rng.sample(flags, min(4, len(flags)))   # (about 250 flagged to 370 agreeing: no bias either way)
+            for n, (task, q, ans, refs, mod) in enumerate(flags):
+                out[split].append(make_row(gid, split, "qa_reason_flag", 400 + n, q, ans, mod, refs))
+                stats["qa_reason_flag"] += 1
         for n, (task, path, q, ans, refs) in enumerate(img_rows(a)):
             out[split].append(make_row(gid, split, task, 500 + n, q, ans, a, refs, image=path))
             stats[task] += 1

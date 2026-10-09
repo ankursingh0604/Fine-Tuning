@@ -20,6 +20,7 @@ uv pip install -q "triton>=3.3.0" numpy pillow pymupdf bitsandbytes "xformers==0
     "unsloth[base] @ git+https://github.com/unslothai/unsloth"
 uv pip install -q --upgrade --no-deps "tokenizers>=0.22.0,<=0.23.0" "trl==0.22.2"
 uv pip install -q "transformers==5.2.0" huggingface_hub
+uv pip install -q rapidocr_onnxruntime             # scanned GADs and photos: the text is read with this local OCR
 
 python - <<'EOF'
 import torch

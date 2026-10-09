@@ -17,6 +17,18 @@ SYN = {
     "soffit": ["soffit", "underside", "bottom of top slab"],
     "hfl": ["hfl", "flood", "ohfl", "chfl", "high flood level"],
     "fl": ["formation", "fl"],
+    "frl": ["formation", "fl", "frl"],
+    "pfl": ["formation", "fl", "proposed", "prop"],
+    "fnd": ["founding", "foundation", "fdn", "fnd"],
+    "trl": ["rail", "trl"],
+    "rl": ["rl", "rail", "reduced"],
+    "tob": ["top", "box", "tob"],
+    "sof": ["soffit"],
+    "ohfl": ["ohfl", "observed", "hfl", "flood"],
+    "chfl": ["chfl", "calculated", "hfl", "flood"],
+    "exist": ["existing", "exist", "ex", "exg"],
+    "ex": ["existing", "exist", "ex", "exg"],
+    "lvl": ["lvl", "level"],
     "formation": ["formation", "fl"],
     "founding": ["founding", "foundation", "fdn", "fnd", "found"],
     "foundation": ["founding", "foundation", "fdn"],
@@ -62,6 +74,19 @@ SYN = {
     "weep": ["weep", "holes"],
     "abbreviation": ["abbreviation", "stands", "means"],
     "existing": ["existing", "exist", "ex"],
+    # the shorthand engineers type (build_dataset_gad.SHORTHAND)
+    "exg": ["existing", "exist", "ex", "exg"],
+    "old": ["existing", "exist", "ex"],
+    "new": ["proposed", "prop"],
+    "prop": ["proposed", "prop"],
+    "tob": ["top", "box"],
+    "fdn": ["founding", "foundation", "fdn"],
+    "dwg": ["dwg", "drawing"],
+    "bl": ["bed", "bl"],
+    "vc": ["vertical", "clearance"],
+    "hydraulic": ["discharge", "velocity", "hfl", "comparative", "table", "hydraulic"],
+    "comparison": ["comparative", "table"],
+    "t/c": ["t/c", "track", "centre"],
     "proposed": ["proposed", "prop"],
     "scour": ["scour"],
     "velocity": ["velocity", "speed"],
@@ -114,6 +139,114 @@ def components(a):
     return out
 
 
+SOURCE_WORDS = {"glossary": "meaning from the drawing office's glossary",
+                "built-in": "standard meaning of this term",
+                "web": "meaning found by a web search for the term - NOT confirmed by the drawing, may not fit",
+                "unknown": "meaning not known: not in the glossary and no web result"}
+
+
+def term_meaning(a, label):
+    """(meaning, source) for a label: an override carried by the annotation (ask_gad's web lookups, the training's
+    simulated lookups) first, then the glossary (gad_tools/glossary.py, no web search here)."""
+    import glossary
+    k = glossary.key(label)
+    o = (a.get("_meanings") or {}).get(k)
+    if o:
+        return o[0], o[1]
+    return glossary.meaning(label, web=False)
+
+
+def end_words(e):
+    if e.get("centre_line"):
+        return f"the centre line of {e['centre_line']}"
+    oc = e.get("on_circle")
+    if oc:
+        return f"the {oc['at']} of a circle" + (f" of the {oc['name']}" if oc.get("name") else "")
+    if e.get("near"):
+        return "near " + " / ".join(f"'{t}'" for t in e["near"])
+    return None
+
+
+def dim_span(d):
+    """'runs between the centre line of UP TRACK and the centre line of DN TRACK' / 'runs from near 'HFL 395.593' to near ...'
+    / None - from the drawn dimension line's ends (annotate_gad.dimension_ends)."""
+    ends = d.get("ends") or []
+    c = d.get("circles")
+    if c:
+        what = f"the circles of the {c['name']}" if c.get("name") else "the row of circles drawn there"
+        return (f"spans one of {what} edge to edge - the circle's diameter" if c["measures"] == "diameter" else
+                f"runs between the same point of two neighbouring circles - the centre-to-centre spacing of {what}")
+    w = [end_words(e) for e in ends]
+    if len(w) == 2 and all(e.get("centre_line") for e in ends):
+        return f"runs between {w[0]} and {w[1]}"
+    if len(w) == 2 and w[0] and w[1] and (ends[0].get("near") or [None])[0] == (ends[1].get("near") or [None])[0]:
+        return f"has both ends {w[0]}"                  # a short dimension at one place: a thickness, a step there
+    if len(w) == 2 and w[0] and w[1]:
+        return f"runs from {w[0]} to {w[1]}"
+    one = next((x for x in w if x), None)
+    return f"has one end {one} (nothing named at its other end)" if one else None
+
+
+def colour_words(a, colour):
+    """'red, like the legend's PROPOSED STRUCTURE' from the sheet's own legend; else just the colour."""
+    if colour != "red":                    # (black / blue text is ordinary annotation: its colour says nothing)
+        return None
+    for k in (a.get("notes") or {}).get("legend_key", []):
+        if k["colour"] == colour and k["style"] == "line":
+            return f"{colour}, the colour of the legend's '{k['label']}'"
+    return None
+
+
+def centre_line_links(a):
+    """{(view, name): [(other name, mm, how)]} - distances between centre lines on a view: unlabelled dimensions whose
+    two ends are on them, and labelled track centres (T/C) between them; plus sums along a row of three or more
+    (computed, said so)."""
+    links = defaultdict(list)
+    for d in a.get("dims", []):
+        e = d.get("ends") or []
+        if len(e) == 2 and e[0].get("centre_line") and e[1].get("centre_line") and e[0]["centre_line"] != e[1]["centre_line"]:
+            n0, n1 = e[0]["centre_line"], e[1]["centre_line"]
+            links[(d["view"], n0)].append((n1, d["value"], "unlabelled dimension"))
+            links[(d["view"], n1)].append((n0, d["value"], "unlabelled dimension"))
+    for d in a.get("labelled_dims", []):
+        if d.get("kind") == "track_centres" and d.get("between") and len(d["between"]) == 2:
+            n0, n1 = d["between"]
+            links[(d["view"], n0)].append((n1, d["value"], f"'{d['label']}'"))
+            links[(d["view"], n1)].append((n0, d["value"], f"'{d['label']}'"))
+    # A-B and B-C with B between them (x order): A-C = sum, computed
+    xs = {(c["view"], c["name"]): c["x"] for c in a.get("centre_lines", []) if c.get("x") is not None}
+    for (view, b_), lst in list(links.items()):
+        for i, (n0, v0, _) in enumerate(lst):
+            for n1, v1, _ in lst[i + 1:]:
+                x0, xb, x1 = xs.get((view, n0)), xs.get((view, b_)), xs.get((view, n1))
+                if None in (x0, xb, x1) or not (min(x0, x1) < xb < max(x0, x1)) or n0 == n1:
+                    continue
+                if any(o == n1 for o, _, _ in links[(view, n0)]):
+                    continue
+                how = f"computed: {fnum(v0)} + {fnum(v1)} through the centre line of {b_}"
+                links[(view, n0)].append((n1, v0 + v1, how))
+                links[(view, n1)].append((n0, v0 + v1, how))
+    return links
+
+
+def callout_index(a):
+    """{text: [(view, colour)]} - every text written on the views (labels over several lines joined)."""
+    idx = defaultdict(list)
+    for v in a.get("views", []):
+        for c in v.get("callouts", []):
+            if isinstance(c, dict):
+                idx[c["text"]].append((v["title"], c.get("colour")))
+    return idx
+
+
+def component_of(text):
+    import gad_kinds as K
+    for pat, name, what in K.COMPONENTS:
+        if re.search(pat, text, re.I):
+            return name, what
+    return None
+
+
 def all_facts(a):
     """Every fact of a GAD annotation: [{"group", "text", "ref"}] - one short line each."""
     F = []
@@ -144,7 +277,7 @@ def all_facts(a):
         if tb.get("name_of_work"):
             add("title_block", "Name of work: " + tb["name_of_work"], "work")
     if a.get("views"):
-        add("views", "Views on the drawing: " + "; ".join(f"{v['title']} ({v['scale'] or 'no scale written'})" for v in a["views"]), "views")
+        add("views", f"Views on the drawing ({len(a['views'])}): " + "; ".join(f"{v['title']} ({v['scale'] or 'no scale written'})" for v in a["views"]), "views")
     for v in a.get("views", []):
         add("view", f"View '{v['title']}' (scale {v['scale'] or 'not written'}): {v['represents']}", ("view", v["title"]))
     if tb.get("revisions"):
@@ -163,14 +296,26 @@ def all_facts(a):
         add("dim", f"Dimension '{d['label']}' = {fnum(d['value'])} mm ({d['meaning']}); on: {view_name(d['view'])}", ("dim", d["label"], d["value"]))
     for s in a.get("slopes", []):
         add("dim", f"Slope '{s['label']}' ({s['meaning']}); on: {view_name(s['view'])}", ("slope", s["label"]))
-    for c in {(c["name"], c["view"]) for c in a.get("centre_lines", [])}:
-        add("dim", f"Centre line shown: {c[0]} (on {view_name(c[1])})", ("cl", c[0]))
+    links = centre_line_links(a)
+    for c in dict.fromkeys((c["name"], c["view"]) for c in a.get("centre_lines", [])):
+        t = f"Centre line of {c[0]} (on {view_name(c[1])}): a reference line - it has no value of its own"
+        lk = links.get((c[1], c[0]))
+        if lk:
+            t += "; distances from it: " + "; ".join(f"{fnum(v)} mm to the centre line of {o} ({how})" for o, v, how in lk)
+        else:
+            t += "; no distance from it to another centre line is written on this view"
+        add("dim", t, ("cl", c[0], c[1]))
     plain = defaultdict(list)
     for d in a.get("dims", []):
         plain[(d["view"], d["direction"])].append(fnum(d["value"]))
     for (view, direction), vals in plain.items():
         add("plain_dims", f"Unlabelled dimension figures (mm, {direction}) on {view_name(view)}: {', '.join(vals)} - the drawing does not "
             "write what each of these measures", ("plain", view, direction))
+    for d in a.get("dims", []):
+        sp = dim_span(d)
+        if sp:
+            add("plain_dims", f"Unlabelled dimension {fnum(d['value'])} mm on {view_name(d['view'])}: its dimension line {sp} (found from the "
+                "drawing's lines; what it measures is not written on the drawing)", ("pdim", d["view"], d["value"]))
     for name, t in (a.get("tables") or {}).items():
         if not isinstance(t, dict):
             continue
@@ -194,7 +339,8 @@ def all_facts(a):
         add("bore_log", t, ("bore", bl["view"]))
     n = a.get("notes") or {}
     for key, label in (("notes", "Note"), ("special_note", "Special note"), ("add_note", "Additional note"), ("fill_note", "Fill note"),
-                       ("design_criteria", "Design criteria"), ("reference_drawings", "Reference drawing")):
+                       ("design_criteria", "Design criteria"), ("reference_drawings", "Reference drawing"),
+                       ("review_comments", "Reviewer's comment marked on the drawing (blue markup, not part of the design)")):
         for it in n.get(key, []):
             add("note", f"{label} {it['no'] or ''}: {it['text']}", (key, it["no"], it["text"][:30]))
     for it in n.get("specifications", []):
@@ -207,9 +353,39 @@ def all_facts(a):
         add("note", f"Seismic zone: {n['seismic_zone']}", ("seismic",))
     if n.get("standard_of_loading"):
         add("note", f"Standard of loading: {n['standard_of_loading']}", ("loading",))
+    for o in a.get("other_values", []):
+        m, src = term_meaning(a, o["label"])
+        val = f"{fnum(o['value'])}" + (f" {o['unit'].lower()}" if o.get("unit") else "")
+        add("other", f"Printed on {view_name(o['view'])}: '{o['label']} = {val}' - " + (f"{m} ({SOURCE_WORDS[src]})" if m else SOURCE_WORDS["unknown"]),
+            ("other", o["label"], o["value"]))
     for name, what, views, in_notes in components(a):
         where = ("shown on " + ", ".join(views[:4])) if views else "mentioned in the notes"
         add("component", f"Component: {name} ({where}) - {what}", ("comp", name))
+    if n.get("legend_key"):
+        add("note", "Legend (what each kind of line means on this sheet): " + "; ".join(
+            f"{k['label']} = {k['colour']} {'hatching' if k['style'] == 'hatched' else 'dashed lines' if k['style'] == 'dashed' else 'lines'}"
+            for k in n["legend_key"]), ("legend_key",))
+    dis = {(d["view"], d["text"]): d for d in a.get("dismantle", [])}
+    for text, where in callout_index(a).items():
+        views = list(dict.fromkeys(v for v, _ in where))
+        cw = colour_words(a, where[0][1])
+        t = f"Text '{text}' is written on {', '.join(views[:4])}" + (f" (in {cw})" if cw else "")
+        comp = component_of(text)
+        if comp:
+            t += f" - the {comp[0]}: {comp[1]}"
+        d = next((dis[(v, text)] for v in views if (v, text) in dis), None)
+        if d and d.get("tips"):
+            bits = []
+            if d.get("short_strokes"):
+                lk = next((k for k in (a.get("notes") or {}).get("legend_key", []) if re.search(r"DISMANT|DIAMANT", k["label"], re.I)), None)
+                bits.append("drawn in short dashes / strokes" + (f" - the legend's '{lk['label']}' ({lk['colour']} {lk['style']} lines)" if lk else ""))
+            if d.get("angled"):
+                bits.append("angled walls at the end of the existing structure")
+            if d.get("parts"):
+                bits.append("labelled " + " / ".join(f"'{p}'" for p in d["parts"]))
+            t += (f". Its {d['tips']} arrow(s) point at existing work" + (": " + ", ".join(bits) if bits else "")
+                  + ("; proposed (red) work is drawn right next to it" if d.get("proposed_next_to") else ""))
+        add("callout", t, ("call", text))
     for f in a.get("findings", []):
         add("finding", f"Disagreement on the drawing: {f}", ("finding", f[:30]))
     for v in a.get("views", []):
@@ -248,6 +424,8 @@ def all_facts(a):
 
 def tokens(text):
     t = text.lower().replace("'", " ")
+    # dotted shorthand as one word: "F.L" -> fl, "H.F.L." -> hfl, "B.L" -> bl, "R.L" -> rl (else single letters)
+    t = re.sub(r"\b((?:[a-z]\.){1,3}[a-z])\b\.?", lambda m: m.group(1).replace(".", ""), t)
     return [w for w in re.findall(r"[a-z]+(?:/[a-z]+)?|\d+(?:\.\d+)?", t) if w not in STOP]
 
 
@@ -300,7 +478,7 @@ def select(a, question, must=(), max_facts=MAX_FACTS):
         chosen.append(i)
         chars += len(facts[i]["text"])
     order = {g: k for k, g in enumerate(["bridge", "views", "title_block", "view", "level", "dim", "plain_dims", "table", "bore_log",
-                                         "band", "note", "abbreviation", "component", "finding", "key_plan", "view_text"])}
+                                         "band", "other", "note", "abbreviation", "component", "callout", "finding", "key_plan", "view_text"])}
     chosen.sort(key=lambda i: (order.get(facts[i]["group"], 99), i))
     return [facts[i] for i in chosen]
 
