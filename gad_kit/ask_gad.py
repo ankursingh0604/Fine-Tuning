@@ -148,12 +148,24 @@ def spot_image(pdf, ann, bbox):
 
 def build(ann, pdf, question):
     # a question about one spot (a figure, a level, a label, a dismantle note): that spot's crop + the facts
-    sp = spot_of(question, ann)
+    # (a soil question's number is a depth or an SBC - "SBC at 3 m" - not a figure on the views: the bore log comes first)
+    soil_q = re.search(r"\bs\.?b\.?c\b|bore|trial\s*pit|trail\s*pit|\bsoil|strata|bearing\s*capacity", question, re.I)
+    sp = None if soil_q and ann.get("bore_logs") else spot_of(question, ann)
     if sp:
         bbox, refs = sp
         text = FX.prompt(ann, question, must=refs)
         return [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}], [spot_image(pdf, ann, bbox)], text
     v = view_in(question, ann) if VIEW_Q.search(question) else None
+    # a question about the soil (SBC, bore log, trial pit, layers, depth tested): the bore log's picture goes with its
+    # fact line, so the model also reads the log itself - a layout the text reader gets wrong is still seen as drawn
+    bore = re.search(r"\bs\.?b\.?c\b|bore|trial\s*pit|trail\s*pit|\bsoil|strata|bearing\s*capacity|\blayers?\b", question, re.I)
+    if v is None and bore and ann.get("bore_logs"):
+        # (several logs: the one whose chainage the question names, else the first; every log's facts go with it)
+        bl = next((b for b in ann["bore_logs"] if b.get("chainage") and b["chainage"] in question), ann["bore_logs"][0])
+        v = next((x for x in ann["views"] if x["title"] == bl["view"]), None)
+        if v:
+            text = FX.prompt(ann, question, must=[("bore", b["view"]) for b in ann["bore_logs"]])
+            return [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}], [view_image(pdf, v, ann)], text
     if v:
         refs = [("view", v["title"])] + [("level", l["label"], l["value"]) for l in ann["levels"] if l["view"] == v["title"]][:12] \
             + [("dim", d["label"], d["value"]) for d in ann["labelled_dims"] if d["view"] == v["title"]][:6]

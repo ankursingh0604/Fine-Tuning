@@ -466,8 +466,32 @@ def qa_bore(a):
                 out.append(("qa_bore", vary(f"What is the SBC at {s['depth_m']:g} m depth?"),
                             f"The bore log ({bl['view']}) gives an SBC of {s['sbc_t_per_m2']:g} t/m² at {s['depth_m']:g} m depth. "
                             "SBC is the safe bearing capacity of the soil.", ref))
-            out.append(("qa_bore", vary("What safe bearing capacities does the bore log give?"),
+            out.append(("qa_bore", vary(rng.choice(["What safe bearing capacities does the bore log give?", "What are the SBC values shown in the sheet?",
+                                                    "List the SBC with depth."])),
                         "From the bore log: " + "; ".join(f"{x['sbc_t_per_m2']:g} t/m² at {x['depth_m']:g} m" if x.get("depth_m") is not None else f"{x['sbc_t_per_m2']:g} t/m²" for x in bl["sbc"]) + ".", ref))
+            # a depth the log does not print: said so, with the printed values either side - never a made-up value
+            dep = sorted((x["depth_m"], x["sbc_t_per_m2"]) for x in bl["sbc"] if x.get("depth_m") is not None)
+            if len(dep) >= 2:
+                k = rng.randrange(len(dep) - 1)
+                (d1, s1), (d2, s2) = dep[k], dep[k + 1]
+                d = round(rng.uniform(d1, d2) * 2) / 2
+                if d1 < d < d2 and all(abs(d - x) > 1e-6 for x, _ in dep):
+                    out.append(("qa_bore", vary(rng.choice([f"What is the SBC at {d:g} m depth?", f"SBC at {d:g}m?"])),
+                                f"The bore log does not print an SBC at {d:g} m. The nearest printed values are {s1:g} t/m² at {d1:g} m "
+                                f"and {s2:g} t/m² at {d2:g} m ({bl['view']}).", ref))
+                d = dep[-1][0] + rng.choice([1, 2, 3])
+                out.append(("qa_bore", vary(f"What is the SBC at {d:g} m depth?"),
+                            f"The bore log does not go that deep: its deepest SBC is {dep[-1][1]:g} t/m² at {dep[-1][0]:g} m ({bl['view']}).", ref))
+        if bl.get("deepest_m") is not None or (bl.get("rl_top") is not None and bl.get("rl_bottom") is not None and bl["rl_top"] > bl["rl_bottom"]):
+            parts = []
+            if bl.get("deepest_m") is not None:
+                parts.append(f"its deepest SBC is printed at {bl['deepest_m']:g} m depth")
+            if bl.get("rl_top") is not None and bl.get("rl_bottom") is not None and bl["rl_top"] > bl["rl_bottom"]:
+                parts.append(f"it runs from RL {bl['rl_top']:.3f} m down to RL {bl['rl_bottom']:.3f} m, "
+                             f"{round(bl['rl_top'] - bl['rl_bottom'], 3):g} m")
+            out.append(("qa_bore", vary(rng.choice(["How deep does the bore log go?", "What is the depth of the bore log?", "Up to what depth was the soil tested?"])),
+                        f"The bore log ({bl['view']}) goes down to about {bl['deepest_m'] if bl.get('deepest_m') is not None else round(bl['rl_top'] - bl['rl_bottom'], 3):g} m: "
+                        + "; ".join(parts) + ".", ref))
         if bl["layers"]:
             out.append(("qa_bore", vary(rng.choice(["What soil layers does the bore log show?", "What is the soil at the bridge site?"])),
                         "The bore log shows (top to bottom): " + "; ".join(x["soil"].lower() for x in bl["layers"]) + ".", ref))

@@ -336,6 +336,10 @@ def all_facts(a):
             t += "; soil layers (top to bottom): " + " / ".join(x["soil"] for x in bl["layers"])
         if bl.get("rl_marks"):
             t += "; RL marks: " + ", ".join(lvl(x) for x in bl["rl_marks"])
+        if bl.get("deepest_m") is not None:
+            t += f"; the log goes down to {fnum(bl['deepest_m'])} m depth (the deepest SBC printed)"
+        if bl.get("rl_top") is not None and bl.get("rl_bottom") is not None and bl["rl_top"] > bl["rl_bottom"]:
+            t += f"; it runs from RL {lvl(bl['rl_top'])} to RL {lvl(bl['rl_bottom'])}, {fnum(round(bl['rl_top'] - bl['rl_bottom'], 3))} m"
         add("bore_log", t, ("bore", bl["view"]))
     n = a.get("notes") or {}
     for key, label in (("notes", "Note"), ("special_note", "Special note"), ("add_note", "Additional note"), ("fill_note", "Fill note"),

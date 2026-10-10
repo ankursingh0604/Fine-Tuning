@@ -971,6 +971,58 @@ def parse_key_plan(view, lines):
     return kp
 
 
+SOIL_WORD = re.compile(r"SOIL|SAND|CLAY|ROCK|GRAVEL|MURUM|MOORUM|MURRUM|SILT|BOULDER|STRATA|BASALT|SHALE|LATERITE|KANKAR|PEBBLE", re.I)
+# beside a bore log's layers: its levels and their labels ("BED LVL. 343.485", "FDN LVL OF", "R/WALL 413.464", "DEPTH (M)")
+NOT_LAYER = re.compile(r"\d{2,4}\.\d{2,3}|^(BED|FDN|FOUND\w*|R\.?\s*L\b|DEPTH|G\.?\s*L\b|N\.?G\.?L|H\.?F\.?L|L\.?W\.?L|EXIST\w*|PROP\w*)\b", re.I)
+
+
+def soil_layers(view, cands):
+    """The soil layers of a bore log, top to bottom, each with all its printed lines. A layer's name is printed over
+    one to four lines in the layer column ("CLAYEY SAND" / "(MOIST CLAY" / "AND SAND" / "MIXTURE)"): the lines of the
+    column one line-height apart are one layer; a bigger gap, or the line after a layer that closed its bracket, starts
+    the next. Not in the column: the levels and their labels, the vertical DEPTH (M) scale, the title and scale.
+    cands: (line, text, has_own_x) - text after an RL printed on the same line has no x of its own."""
+    hs = sorted(l["bbox"][3] - l["bbox"][1] for l, _, _ in cands) or [10]
+    hmed = hs[len(hs) // 2]
+    ok = []
+    for l, t, own in cands:
+        w, h = l["bbox"][2] - l["bbox"][0], l["bbox"][3] - l["bbox"][1]
+        # the depth scale's figures ("1.00", "1.50") stand in the layer column: not part of a layer's name
+        t = re.sub(r"^(?:\d{1,2}\.\d{1,3}\s+)+|(?:\s+\d{1,2}\.\d{1,3})+$", "", t.strip())
+        t = re.sub(r"\s+\d{1,2}\.\d{2}\s+", " ", t)
+        if re.fullmatch(r"[\d.\s]*", t):
+            continue
+        if not t or SCALE_RE.match(t) or re.search(r"BORE\s*LOG|TR[AI]{2}L\s*PIT", t, re.I) or l in view.get("title_lines", []) \
+                or NOT_LAYER.search(t) or h > 2 * hmed or w < h:
+            continue
+        ok.append((l, t, own))
+    xs = [l["bbox"][0] for l, t, own in ok if own and SOIL_WORD.search(t)]
+    col = [(l, t) for l, t, own in ok if not own or (xs and min(abs(l["bbox"][0] - x) for x in xs) <= 6 * hmed)]
+    layers = []
+    for l, t in sorted(col, key=lambda c: centre(c[0]["bbox"])[1]):
+        y, h = centre(l["bbox"])[1], l["bbox"][3] - l["bbox"][1]
+        if layers:
+            prev = layers[-1]
+            s = prev["soil"]
+            closed = "(" in s and s.rstrip().endswith(")") and s.count("(") == s.count(")")
+            open_ = s.count("(") > s.count(")")
+            gap = y - prev["y"]
+            # one-line layers stacked close ("REDDISH SANDY SOIL" / "BROWNISH SANDY SOIL"): the previous line ended on
+            # a soil noun with nothing left open, and this line names a soil without continuing it ("(SOFT ROCK)",
+            # "AND SAND", "TO MEDIUM SAND)") - a new layer
+            ended = re.search(r"\b(SOIL|SANDS?|CLAYS?|ROCK|GRAVELS?|STONE|SILT|BOULDERS?|MOORUM|MURUM|MURRUM|SHALE|BASALT|LATERITE|KANKAR)\s*$", s, re.I)
+            starts = SOIL_WORD.search(t) and not re.match(r"[(,&]|(AND|TO|WITH|OF|OR|MIXED|MIXTURE|IN)\b", t, re.I)
+            if ended and starts and not open_:
+                layers.append({"soil": t, "y": y})
+                continue
+            if (gap <= 1.6 * h and not closed) or (open_ and gap <= 3.5 * h):
+                prev["soil"] += " " + t
+                prev["y"] = y
+                continue
+        layers.append({"soil": t, "y": y})
+    return [{"soil": re.sub(r"\s+", " ", x["soil"]).strip()} for x in layers if SOIL_WORD.search(x["soil"])]
+
+
 def read_bore_log(view, lines, skip=()):
     box = view["bbox"]
     if box[3] - box[1] < 60:
@@ -978,35 +1030,37 @@ def read_bore_log(view, lines, skip=()):
         # standing right above the title
         box = [box[0] - 60, box[1] - 330, box[2] + 90, box[3]]
     inside_lines = [l for l in lines if inside(centre(l["bbox"]), box) and not any(inside(centre(l["bbox"]), b) for b in skip)]
-    sbc, layers, rls = [], [], []
+    sbc, rls, cands = [], [], []
     for l in sorted(inside_lines, key=lambda l: centre(l["bbox"])[1]):
         t = re.sub(r"\s+", " ", l["text"].replace("|", " ")).strip()
-        m = re.search(r"SBC\s*[=:]?\s*(\d+(?:\.\d+)?)\s*T\s*/\s*M\s*[²2]?\s*(\d+(?:\.\d+)?)?", t, re.I)   # "T/M 2" is m², not a depth
+        m = re.search(r"SBC\s*[=:]?\s*(\d+(?:\.\d+)?)\s*T?\s*/\s*M\s*[²2]?\s*(\d+(?:\.\d+)?)?", t, re.I)   # "T/M 2" is m², not a depth
         if m:
             depth = float(m.group(2)) if m.group(2) else None
-            if depth is None:                                    # the depth is often its own text on the same row
+            if depth is None:
+                # the depth is its own text on the same row: right after the SBC, or in the depth scale to its left
+                # ("(SBC 10.64 T/M²)" with "1.00" at the far left of a trial pit) - the nearest one on the row
                 cy = centre(l["bbox"])[1]
-                d = [o for o in inside_lines if abs(centre(o["bbox"])[1] - cy) < 4 and 0 <= o["bbox"][0] - l["bbox"][2] < 120
+                gap = lambda o: o["bbox"][0] - l["bbox"][2] if o["bbox"][0] >= l["bbox"][2] else l["bbox"][0] - o["bbox"][2]
+                d = [o for o in inside_lines if abs(centre(o["bbox"])[1] - cy) < 4 and -2 <= gap(o) < 220
                      and re.fullmatch(r"\d{1,2}\.\d{1,3}", o["text"].strip())]
                 if d:
-                    depth = float(min(d, key=lambda o: o["bbox"][0])["text"])
+                    depth = float(min(d, key=gap)["text"])
             sbc.append({"sbc_t_per_m2": float(m.group(1)), "depth_m": depth, "text": t})
             continue
         m = re.match(r"^R\.?L\.?\s*[:=]?\s*(\d{2,4}\.\d{1,3})", t, re.I)
         if m:
             rls.append(float(m.group(1)))
+            rest = t[m.end():].strip()                       # "RL 422.031 SANDY SOIL (MEDIUM DENSE": a layer starts on it
+            if SOIL_WORD.search(rest):
+                cands.append((l, rest, False))
             continue
-        if re.search(r"SOIL|SAND|CLAY|ROCK|GRAVEL|MURUM|MOORUM|SILT|BOULDER|STRATA|BASALT|SHALE", t, re.I) and not SCALE_RE.match(t) \
-                and "BORE" not in t.upper() and l not in view.get("title_lines", []):
-            if layers and centre(l["bbox"])[1] - layers[-1]["y"] <= 13:
-                layers[-1]["soil"] += " " + t
-                layers[-1]["y"] = centre(l["bbox"])[1]
-            else:
-                layers.append({"soil": t, "y": centre(l["bbox"])[1]})
-    for x in layers:
-        x.pop("y")
+        cands.append((l, t, True))
+    layers = soil_layers(view, cands)
     m = re.search(r"CH\.?\s*[:\-]?\s*([\d+.]+)\s*M?|AT\s*([\d+.]+)\s*M", view["title"], re.I)
-    return {"view": view["title"], "chainage": (m.group(1) or m.group(2)) if m else None, "sbc": sbc, "layers": layers, "rl_marks": rls}
+    # how deep the log goes: the deepest SBC depth printed, and the top and bottom RL of the log
+    depths = [s["depth_m"] for s in sbc if s["depth_m"] is not None]
+    return {"view": view["title"], "chainage": (m.group(1) or m.group(2)) if m else None, "sbc": sbc, "layers": layers, "rl_marks": rls,
+            "deepest_m": max(depths) if depths else None, "rl_top": max(rls) if rls else None, "rl_bottom": min(rls) if rls else None}
 
 
 BAND_KINDS = ("road_lsection", "drain_lsection", "ground_profile")
