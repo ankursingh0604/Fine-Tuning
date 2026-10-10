@@ -425,18 +425,56 @@ def plan_grade_points(lines, plan_bottom):
         sx = (b[0] + b[2]) / 2
         fl = next((o for o in lines if o["text"].startswith("FL:") and not horizontal(o)
                    and 0 < o["bbox"][0] - b[0] < 16 and abs(o["bbox"][3] - b[3]) < 40), None)
+        if fl is None:
+            # Tilted symbols: their boxes are wider, so the rule above can miss the FL. On every symbol the rule
+            # above does read, the FL is the next line of the same text block: centre about 12 pt further across
+            # (11.7-12.0 in 95 % of 2,234 symbols) and centred on the chainage (within 0.5 pt along). Only exactly
+            # that position is accepted here, so a neighbouring symbol's FL is never taken.
+            dx, dy = l["dir"]
+            lc = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+
+            def rel(o):
+                ox, oy = (o["bbox"][0] + o["bbox"][2]) / 2 - lc[0], (o["bbox"][1] + o["bbox"][3]) / 2 - lc[1]
+                return ox * dx + oy * dy, ox * -dy + oy * dx            # (along, across)
+            cands = [o for o in lines if o["text"].startswith("FL:") and not horizontal(o)
+                     and o["dir"][0] * dx + o["dir"][1] * dy > 0.98 and 10.5 < rel(o)[1] < 13.5 and abs(rel(o)[0]) < 3]
+            fl = cands[0] if len(cands) == 1 else None                  # exactly one, or none at all
         bar = [o for o in lines if o is not l and re.fullmatch(r"(1:)?[\d.]+ [FR]|LEVEL", o["text"])
                and 0 < b[1] - o["bbox"][3] < 40 and abs((o["bbox"][0] + o["bbox"][2]) / 2 - sx) < 110]
         cxs = lambda o: (o["bbox"][0] + o["bbox"][2]) / 2
         left = max((o for o in bar if cxs(o) < sx), key=cxs, default=None)
         right = min((o for o in bar if cxs(o) >= sx), key=cxs, default=None)
+        alt = None
+        if abs(l["dir"][0]) > 0.08:
+            # Tilted symbol: the x rule above can take the neighbouring symbol's labels in a dense cluster. The other
+            # reading decides before / after along the tilted bar (which crosses the top of the stem, the end of the
+            # chainage label); the nearest label on each side is this symbol's own. It is used only if it agrees
+            # better with the levels to both neighbours (checked below), so nothing that agreed before can change.
+            dx, dy = l["dir"]
+            cxy = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+            half = 0.5 * (abs((b[2] - b[0]) * dx) + abs((b[3] - b[1]) * dy))
+            end = (cxy[0] + dx * half, cxy[1] + dy * half)
+            ctr = lambda o: ((o["bbox"][0] + o["bbox"][2]) / 2, (o["bbox"][1] + o["bbox"][3]) / 2)
+            labs = [o for o in lines if o is not l and re.fullmatch(r"(1:)?[\d.]+ [FR]|LEVEL", o["text"])
+                    and ((ctr(o)[0] - end[0]) ** 2 + (ctr(o)[1] - end[1]) ** 2) ** 0.5 < 160]
+            if labs:
+                near = min(labs, key=lambda o: (ctr(o)[0] - end[0]) ** 2 + (ctr(o)[1] - end[1]) ** 2)
+                ux, uy = near["dir"]                                          # the bar's direction (labels follow it)
+                s = lambda o: (ctr(o)[0] - end[0]) * ux + (ctr(o)[1] - end[1]) * uy
+                n = lambda o: abs((ctr(o)[0] - end[0]) * -uy + (ctr(o)[1] - end[1]) * ux)
+                along_bar = [o for o in labs if o["dir"][0] * ux + o["dir"][1] * uy > 0.98 and n(o) < 60]
+                alt = (max((o for o in along_bar if s(o) < 0), key=s, default=None),
+                       min((o for o in along_bar if s(o) >= 0), key=s, default=None))
+                if alt == (left, right):
+                    alt = None
         out.append({"line": "proposed 3rd line" if l["color"] == RED else "existing UP line",
                     "chainage": m.group(1), "chainage_m": km_to_m(m.group(1)),
                     "chainage_system": "proposed" if l["color"] == RED else "existing",
                     "fl": num(fl["text"].split(":")[1]) if fl else None,
                     "gradient_before": words(left["text"]) if left else None, "label_before": left["text"] if left else None,
                     "gradient_after": words(right["text"]) if right else None, "label_after": right["text"] if right else None,
-                    "bbox": union([b] + [o["bbox"] for o in (fl, left, right) if o])})
+                    "bbox": union([b] + [o["bbox"] for o in (fl, left, right) if o]),
+                    "_alt": alt, "_parts": (b, fl, left, right)})
     # Each line's points in chainage order: check that the levels agree with the gradient between them.
     for line in ("proposed 3rd line", "existing UP line"):
         pts = sorted({p["chainage_m"]: p for p in out if p["line"] == line}.values(), key=lambda p: p["chainage_m"])
@@ -446,7 +484,40 @@ def plan_grade_points(lines, plan_bottom):
             dist, rise = c["chainage_m"] - a["chainage_m"], c["fl"] - a["fl"]
             a["next_point_chainage_m"], a["level_change_to_next_m"] = c["chainage_m"], round(rise, 3)
             a["implied_gradient_to_next"] = "level" if abs(rise) < 0.0005 else f"1 in {dist / abs(rise):.0f} {'rising' if rise > 0 else 'falling'}"
+        # tilted symbols: take the along-the-bar labels only where they agree better with the levels on both sides
+        prev_imp = {c["chainage_m"]: a.get("implied_gradient_to_next") for a, c in zip(pts, pts[1:])}
+        for p in pts:
+            if not p.get("_alt"):
+                continue
+            before_imp, after_imp = prev_imp.get(p["chainage_m"]), p.get("implied_gradient_to_next")
+            nl, nr = p["_alt"]
+            changed = False
+            # each side separately, and only when that side's new label is proven by the levels and the old is not
+            if nl and gradients_agree(words(nl["text"]), before_imp) > gradients_agree(p["gradient_before"], before_imp):
+                p["gradient_before"], p["label_before"], p["_left"] = words(nl["text"]), nl["text"], nl
+                changed = True
+            if nr and gradients_agree(words(nr["text"]), after_imp) > gradients_agree(p["gradient_after"], after_imp):
+                p["gradient_after"], p["label_after"], p["_right"] = words(nr["text"]), nr["text"], nr
+                changed = True
+            if changed:
+                b, fl, left0, right0 = p["_parts"]
+                p["bbox"] = union([b] + [o["bbox"] for o in (fl, p.get("_left", left0), p.get("_right", right0)) if o])
+    for p in out:
+        for k in ("_alt", "_parts", "_left", "_right"):
+            p.pop(k, None)
     return out
+
+
+def gradients_agree(label_words, implied):
+    """1 if a gradient label ('1 in 614 falling', 'level') matches the gradient implied by two FLs (within 3 %), else 0."""
+    if not label_words or not implied:
+        return 0
+    if label_words == "level" or implied == "level":
+        return int(label_words == implied)
+    a, b = re.match(r"1 in ([\d.]+) (\w+)", label_words), re.match(r"1 in ([\d.]+) (\w+)", implied)
+    if not a or not b:
+        return 0
+    return int(a.group(2) == b.group(2) and abs(float(a.group(1)) - float(b.group(1))) / float(a.group(1)) < 0.03)
 
 
 def extras(lines, band, regions):

@@ -1,0 +1,30 @@
+L-SECTION v5 MODEL ON RUNPOD - STEP BY STEP
+Qwen3.5-4B, 16-bit LoRA, trained on all 157 sheets of the 19 Plan & L-section PDFs (xyz.pdf is a copy of
+MKN_PNP_1040-1068 and is read once). No sheet is held back (your choice), so the final score is on validation rows
+taken from every sheet - it is optimistic; test it yourself on a new sheet.
+
+WHICH GPU
+  H100 80 GB SXM - template RunPod PyTorch (CUDA 12.x), container disk 30 GB, network volume 50 GB at /workspace.
+  GPU use: batch 8 x 2 (rows are up to 3072 tokens; GAD v2 peaked at 18 % memory at batch 8) and 8 data-loading workers; about 3-4 h for 2 epochs (stops at 4 h). The smoke test prints the GPU utilisation and peak memory.
+
+A. ON THE LAPTOP (already done; repeat only after changing the PDFs or the readers)
+  1. .venv\Scripts\python scripts\annotate_v5.py         (all PDFs -> data\v5\annotations, data\v5\sheets.csv)
+     .venv\Scripts\python scripts\build_dataset_v5.py    (-> data\v5\dataset)
+  2. .venv_check\Scripts\python lsec_kit\check_lsec.py --cap 3072    (must say "all passed"; writes keep_ids.json)
+  3. .venv\Scripts\python lsec_kit\make_bundle_lsec.py   -> lsec_kit\lsec_bundle.zip
+     Upload lsec_bundle.zip to /workspace on the pod.
+
+B. ON THE POD (web terminal) - one line:
+  cd /workspace && unzip -q lsec_bundle.zip && cd lsec_bundle/lsec_kit && bash setup_runpod.sh && bash run_runpod.sh && sleep 10 && tail -f /workspace/lsec_run/train.log
+  - setup (~10-15 min) prints the GPU and "bf16: True"; training starts in the background.
+  - send me the pre-flight line and the SMOKE TEST block. Out of memory at the start: bash run_runpod.sh --batch 4 --grad-accum 4
+  - pod restarted? bash run_runpod.sh --resume
+  At the end ("ALL DONE"): /workspace/lsec_run/adapter.zip and /workspace/lsec_run/eval/test_summary.txt.
+  Download both, then STOP the pod.
+
+C. YOUR OWN TEST (any L-section PDF; the RTX 3060 works for answering)
+  python ask_lsec.py --adapter <adapter.zip or folder> --pdf "<a PDF>" -i         (--4bit on a shared GPU)
+  Ask: "details of bridge 264", "degree of curve 207", "which curve is bridge 264 on", "FL at 987+520",
+  "gradient near 1030+500", "what is TBM BMP40", "what do the notes say about rail level", "what is J1",
+  "what is <anything printed on the sheet>". --show-facts shows what the model was given.
+  Railsight (the chat UI) with the v5 model: python ../runpod/chat_ui.py --adapter <adapter> --v5

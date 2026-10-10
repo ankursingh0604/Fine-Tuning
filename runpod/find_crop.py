@@ -508,6 +508,12 @@ class Finder:
             if re.search(r"\b(list|all|how many|which|what|show|every|count)\b", ql):
                 return self.list_bridges(q)
             return None
+        # a column of the bridge table that no callout / level block carries ("discharge of 229UP", "free board of
+        # bridge 220", "remarks for bridge 231"): the table's cells for it
+        if self.table_asks(ql, levels=False):
+            got = [self.table_answer(n, ql, levels=False) for n in dict.fromkeys(nums)]
+            if any(got):
+                return "\n\n".join(g or f"Bridge {n}: no row for it in a bridge table on this sheet." for n, g in zip(dict.fromkeys(nums), got))
         # a band value at the bridge (ground level, cut / fill, track distance, a difference): the band reader. A level
         # printed in the bridge's own level block (FL / RL / HFL / BL / HC / VC, "RL 4TH LINE") is answered from it
         if re.search(r"ground|\bogl\b|\bgl\b|\bcut\b|\bfill\b|track\s*(?:dist|cent)|differ", ql):
@@ -567,16 +573,130 @@ class Finder:
             got, want, lv_read, lv_pdf = bridge_list.bridge_row(self, num, bs)
             deg, note = self.curve_degree(bridge_list.chainage_value(want["chainage"]), num)
             notes = [note] if note else []
+            if want.get("_prop_chainage"):                 # the proposed bridge at its own chainage: its own curve
+                deg_pr, note_pr = self.curve_degree(bridge_list.chainage_value(want["_prop_chainage"]), num)
+                deg = (deg[0], deg_pr[1])
+                notes += [note_pr] if note_pr and note_pr != note else []
             # the card's own level cells, checked like the rest: HFL (the highest flood level) and the rail levels
+            if (got.get("_prop_chainage") or None) != (want.get("_prop_chainage") or None):
+                notes.append(f"{num} · proposed chainage: read {got.get('_prop_chainage')!r}, the PDF says {want.get('_prop_chainage')!r}")
             for what, f in (("HFL", bridge_card.hfl_max), ("rail level", bridge_card.rail_levels)):
                 r, p_ = f(lv_read), f(lv_pdf)
                 if r != p_:
                     notes.append(f"{num} · {what}: read {r!r}, the PDF says {p_!r}")
+            c = bridge_card.card(got, lv_read, deg)
+            # the sheet's DETAILS OF BRIDGES table: what the callout and level block leave empty (bed level, the
+            # proposed type / cells / span / box height, FL, HFL), and where both give a value and they differ, a note
+            row_t = self.details_table().get(num) or self.details_table().get(re.sub(r"(UP|DN)$", "", num))
+            if row_t:
+                notes += self.fill_from_table(c, row_t, num)
+            # TC_DISTANCE: the band's track distance at the (proposed) bridge's chainage
+            ch_tc = bridge_list.chainage_value(want.get("_prop_chainage") or want["chainage"])
+            tc, note_tc = self.track_distance_at(ch_tc, num)
+            if tc:
+                c["tc"] = (tc, tc)
+            notes += [note_tc] if note_tc else []
             if notes:
                 got["_degree_check"] = "; ".join(notes)
-            out.append((bridge_card.card(got, lv_read, deg), got, want))
+            out.append((c, got, want))
         out.sort(key=lambda t: bridge_list.chainage_value(t[2]["chainage"]))
         return out
+
+    def details_table(self):
+        """The sheet's DETAILS OF BRIDGES table (bridge_table.py), read once: {bridge no: {column: [Word]}}."""
+        if getattr(self, "_details", None) is None:
+            import bridge_table
+            page = None
+            if self.s.source == "pdf" and getattr(self.s, "pdf", None) is not None:
+                import pymupdf
+                page = pymupdf.open(self.s.pdf)[self.s.page_no]
+                if page.rotation:
+                    page.remove_rotation()
+            self._details = bridge_table.read(self.s.words, page, getattr(self.s, "dpi", 72) / 72)
+        return self._details
+
+    def fill_from_table(self, c, row, num):
+        """Fill the card's empty cells from the bridge's row of the DETAILS OF BRIDGES table, every cell read by the model
+        from its own crop and checked against the PDF; returns the notes (misreadings, callout vs table differences)."""
+        import bridge_card
+        import bridge_table
+        notes = []
+        norm = lambda v: re.sub(r"[^A-Z0-9.+]", "", (v or "").upper())
+
+        def cell(key):
+            ws = row.get(key)
+            if not ws:
+                return ""
+            read = " ".join(self.read_parts(ws, f"tbl_{num}_{key}")[0].split())
+            pdf = bridge_table.text(ws)
+            if self.s.source == "pdf" and norm(read) != norm(pdf):
+                notes.append(f"{num} · bridge table {key}: read {read!r}, the PDF says {pdf!r}")
+            return read
+
+        def fill(k, i, v):
+            cur = list(c.get(k, ("", "")))
+            if v and not cur[i]:
+                cur[i] = v
+            elif v and cur[i] and norm(v) != norm(cur[i]) and not (re.fullmatch(r"-?\d+(?:\.\d+)?", v) and
+                                                                  re.fullmatch(r"-?\d+(?:\.\d+)?", cur[i]) and float(v) == float(cur[i])):
+                notes.append(f"{num} · {k} ({'existing' if i == 0 else 'proposed'}): callout / level block {cur[i]!r}, bridge table {v!r}")
+            c[k] = tuple(cur)
+        bed = cell("bed")
+        fill("bed_level", 0, bed)
+        fill("bed_level", 1, bed)
+        for i, key in ((0, "type_ex"), (1, "type_pr")):
+            conf, cat, st = bridge_table.bridge_type(cell(key))
+            if st:
+                fill("type", i, st)
+            if conf:
+                n, sp, h = bridge_card.config(conf)
+                fill("cells", i, n)
+                fill("span", i, sp)
+                fill("height", i, h)
+        fill("fl", 0, cell("fl_ex"))
+        fill("fl", 1, cell("fl_pr"))
+        hfls = [v for v in (cell("chfl"), cell("ohfl")) if re.fullmatch(r"-?\d+(?:\.\d+)?", v or "")]
+        if hfls:
+            top = max(hfls, key=float)
+            fill("hfl", 0, top)
+            fill("hfl", 1, top)
+        return notes
+
+    def track_distance_at(self, ch, num):
+        """(track distance at chainage ch as text, note): the band's TRACK DISTANCE row there - the printed column, or
+        the two columns either side interpolated - every value read by the model and checked; ("", "") without one."""
+        import band_table
+        if ch == float("inf") or not self.bands():
+            return "", ""
+        rows, _ = band_table.match_rows(self.bands(), "track distance")
+        rows = [(b, r) for b, r in rows if re.search(r"TRACK|DIST|C\s*/\s*C|CENTRE", r.heading, re.I)]
+        for b, r in rows:
+            vals = b.values(r)
+            if not vals or not (vals[0][0] - 1e-6 <= ch <= vals[-1][0] + 1e-6):
+                continue
+            # a track-distance row that repeats another row of the band column for column (8.pdf prints the PROP. FL
+            # values in it on every page) is a drafting error on the sheet - said so, not used
+            mine = [w.text for w in r.words]
+            twin = next((o for o in b.rows if o is not r and o is not b.chain and len(o.words) == len(r.words)
+                         and sum(a == w.text for a, w in zip(mine, o.words)) >= 0.9 * len(mine)), None)
+            if twin is not None:
+                return "", (f"{num} · TC distance: this sheet's row '{r.heading}' repeats the row '{twin.heading}' value for "
+                            f"value (e.g. {mine[len(mine) // 2]}) - a drafting error on the drawing; left empty")
+            exact = [w for c_, w in vals if abs(c_ - ch) < 1e-6]
+            pdf = self.s.source == "pdf"
+            if exact:
+                y, _ = self.read_value(exact[0], r)
+                p = band_table.value(exact[0].text)
+                note = "" if not pdf or (y is not None and abs(y - p) < 1e-9) else f"{num} · TC distance: read {y!r}, the PDF says {p!r}"
+                return (f"{y:.3f}" if y is not None else ""), note
+            i = max(k for k, (c_, _) in enumerate(vals) if c_ < ch)
+            (c1, w1), (c2, w2) = vals[i], vals[i + 1]
+            (y1, _), (y2, _) = self.read_value(w1, r), self.read_value(w2, r)
+            p1, p2 = band_table.value(w1.text), band_table.value(w2.text)
+            f = lambda a, b_: a + (b_ - a) * (ch - c1) / (c2 - c1)
+            note = "" if not pdf or (y1, y2) == (p1, p2) else f"{num} · TC distance columns: read {y1!r}, {y2!r}, the PDF says {p1!r}, {p2!r}"
+            return (f"{f(y1, y2):.3f}" if y1 is not None and y2 is not None else ""), note
+        return "", ""
 
     def curve_degree(self, ch, num):
         """((existing, proposed) degree of curve, check note) at chainage ch: the degree of the curve whose start and
@@ -673,15 +793,66 @@ class Finder:
                     if "span" in shown:
                         parts.append(f"span {f['span'] or '?'}")
                     if "type" in shown:
-                        parts.append(f"{f['type'] or '?'}" + (f", proposal: {f['proposal']}" if f["proposal"] else ""))
+                        import bridge_list
+                        chs = list(bridge_list.AT_CH.finditer(read))           # a proposal printed with its own chainage
+                        own = (f" at CH {bridge_list.chainage_str(chs[-1].group(1))}" if f["proposal"] and len(chs) > 1 else "")
+                        parts.append(f"{f['type'] or '?'}" + (f", proposal: {f['proposal']}{own}" if f["proposal"] else ""))
                     out.append(f"{b.name}: {', '.join(parts)}{ok}\n  (the model read: \"{read}\")")
             if "levels" in want or not want:
                 blocks = bs[0].levels
+                clr = self.table_answer(num, ql, blocks)
                 if not blocks:
-                    out.append(f"Br. No. {num}: no level block (FL / HFL / BL) is printed for it on this sheet.")
+                    out.append(clr or f"Br. No. {num}: no level block (FL / HFL / BL) is printed for it on this sheet.")
                     continue
-                out.append(self.level_answer(blocks[0], f"brlv_{num}", f"Br. No. {num}", ql, st))
+                out.append(self.level_answer(blocks[0], f"brlv_{num}", f"Br. No. {num}", ql, st) + (f"\n{clr}" if clr else ""))
         return "\n\n".join(out)
+
+    # the bridge table's columns a question can name: (column key or prefix of the _ex / _pr pair, its name, words);
+    # level columns (bed, CHFL, OHFL, HC, VC) are answered from the table when the bridge's level block lacks them
+    TABLE_COLS = [("discharge", "discharge", r"discharge|\bdisch\b|cumec"), ("fb", "free board", r"free\s*board|\bf\.?b\b"),
+                  ("cushion", "earth cushion", r"cushion"), ("slab", "top slab thickness", r"slab\s*thick|top\s*slab"),
+                  ("remarks", "remarks", r"remark|\bnote"), ("crossing", "type of crossing", r"crossing|descri|over\s*what|what\s+.*\bcross"),
+                  ("hc", "HC", r"\bh\.?c\b|horizontal\s*clearance"), ("vc", "VC", r"\bv\.?c\b|vertical\s*clearance"),
+                  ("clearance", "clearance", r"(?<!horizontal )(?<!vertical )clearance(?!\s*\(?[hv])"),
+                  ("chfl", "CHFL", r"\bc\.?h\.?f\.?l\b"), ("ohfl", "OHFL", r"\bo\.?h\.?f\.?l\b"), ("bed", "bed level / road level", r"\bbed\b|\bb\.?l\b|road\s*level")]
+    LEVEL_COLS = ("hc", "vc", "chfl", "ohfl", "bed")
+
+    def table_asks(self, ql, levels=True):
+        """The bridge-table columns the question names (level columns too unless levels=False)."""
+        return [(k, n) for k, n, pat in self.TABLE_COLS if re.search(pat, ql) and (levels or k not in self.LEVEL_COLS)]
+
+    def table_answer(self, num, ql, blocks=(), levels=True):
+        """Whatever the question asks of the bridge's row in the bridge table (discharge, free board, earth cushion,
+        top slab, clearance, HC / VC, remarks, the crossing ...): those cells, read by the model and checked against
+        the PDF. Only when asked - the CSV card keeps its own fixed rows. "" when the table has no row for it or the
+        question names no column; a level column already printed in the bridge's level block is left to the block."""
+        import bridge_table
+        want = self.table_asks(ql, levels)
+        if not want:
+            return ""
+        import sheet_objects
+        printed = {re.sub(r"[^A-Z]", "", k.upper()) for b in blocks[:1] for k, _ in sheet_objects.BLOCK_KV.findall(" ".join(p.text for p in b))}
+        lab = {"hc": ("HC",), "vc": ("VC",), "chfl": ("CHFL",), "ohfl": ("OHFL",), "bed": ("BEDLEVEL", "BL", "ROADLEVEL")}
+        want = [(k, n) for k, n in want if not (k in lab and printed & set(lab[k]))]
+        key = re.sub(r"\s", "", num.upper())
+        row = self.details_table().get(key) or self.details_table().get(re.sub(r"(UP|DN)$", "", key))
+        if not want or not row:
+            return ""
+        st = self.asked_status(ql)
+        lines = []
+        for k, name in want:
+            cols = [(c, name + (" (existing line)" if c.endswith("_ex") else " (proposed line)" if c.endswith("_pr") else ""))
+                    for c in ([k] if k in row else [k + "_ex", k + "_pr"])
+                    if not (st == "existing" and c.endswith("_pr") or st == "proposed" and c.endswith("_ex"))]
+            got = [(c, label) for c, label in cols if row.get(c)]
+            if not got:
+                lines.append(f"  {name}: not printed in the bridge table for {num}")
+            for c, label in got:
+                read = " ".join(self.read_parts(row[c], f"tbl_{key}_{c}")[0].split())
+                pdf = bridge_table.text(row[c])
+                lines.append(f"  {label}: {read}" + ("" if self.s.source != "pdf" else " (matches the PDF text)"
+                                                     if read.replace(" ", "") == pdf.replace(" ", "") else f" - CHECK: the PDF text says {pdf}"))
+        return f"{num} in the bridge table (read by the model):\n" + "\n".join(lines)
 
     def read_block(self, parts, what):
         """A level block as the model read it. A line whose "label = value" the reading left out (a tall block of ten
@@ -725,7 +896,7 @@ class Finder:
                 return "RL"
             return k2
         # the levels asked for; none named -> all of them
-        which = {c for c, pat in (("HFL", r"\bh\.?f\.?l\b|flood"), ("BL", r"\bb\.?l\b|\bbed\b"), ("FL", r"\bf\.?l\b|formation"),
+        which = {c for c, pat in (("HFL", r"\b[oc]?\.?h\.?f\.?l\b|flood"), ("BL", r"\bb\.?l\b|\bbed\b"), ("FL", r"\bf\.?l\b|formation"),
                                   ("RL", r"\br\.?l\b|rail\s*level"), ("ROAD", r"road\s*level"),
                                   ("HC", r"\bh\.?c\b|horizontal\s*clearance"), ("VC", r"\bv\.?c\b|vertical\s*clearance"))
                  if re.search(pat, ql)}
@@ -756,16 +927,19 @@ class Finder:
         import sheet_objects
         ql = q.lower()
         m = re.search(r"\b(lc|rob|rub|fob)\s*(?:no\.?)?\s*[-.]?\s*(\d+[a-z]*)\b", ql)
-        if not m or not re.search(self.LEVEL_Q, ql):
+        if not m or not (re.search(self.LEVEL_Q, ql) or self.table_asks(ql)):
             return None
         kind, num = m.group(1).upper(), m.group(2).upper()
+        if not re.search(self.LEVEL_Q, ql):                 # "remarks of LC 123", "what does LC 123 cross": the table
+            return self.table_answer(f"{kind}{num}", ql) or None
         cs = [c for c in self.objects().crossings if c.kind == kind and (c.num or "") == num]
         if not cs:
-            return None
+            return self.table_answer(f"{kind}{num}", ql) or None
         c = next((c for c in cs if c.levels), None)
+        clr = self.table_answer(f"{kind}{num}", ql, c.levels if c else ())
         if not c:
-            return f"{kind} {num}: no level block (FL / road level / HC / VC) is printed for it on this sheet."
-        return self.level_answer(c.levels[0], f"xinglv_{c.label}", f"{kind} {num}", ql, self.asked_status(ql))
+            return clr or f"{kind} {num}: no level block (FL / road level / HC / VC) is printed for it on this sheet."
+        return self.level_answer(c.levels[0], f"xinglv_{c.label}", f"{kind} {num}", ql, self.asked_status(ql)) + (f"\n{clr}" if clr else "")
 
     def curve_answer(self, q):
         """'Which curve is near Br. No. 15' / 'curve at CH 11384' / 'details of curve 8'."""

@@ -24,7 +24,7 @@ TEMPLATE = [
     ("--- METADATA (BOX) ---", None), ("NO OF CELLS / SPAN *", "cells"), ("SPAN SIZE *", "span"),
     ("BOX HEIGHT ( only for rcc box * ) ", "height"), ("STONE MASONRY (m)", None), (None, None), (None, None),
     ("--- L-SECTION ---", None), ("CHAINAGE *", "chainage"), ("SKEW ANGLE", "skew"), ("DEGREE OF CURVE", "degree"),
-    ("BED LEVEL *", "bed_level"), ("FORMATION LEVEL *", "fl"), ("RAIL LEVEL ", "rl"), ("TC_DISTANCE", None),
+    ("BED LEVEL *", "bed_level"), ("FORMATION LEVEL *", "fl"), ("RAIL LEVEL ", "rl"), ("TC_DISTANCE", "tc"),
     ("HFL", "hfl"), ("END DIST", "end_dist"), (None, None),
     ("--- HYDROLOGY ---", None), ("SCOUR DEPTH BELOW BED LEVEL ", None), ("MAX SCOUR LEVEL", None), ("DISCHARGE", None),
     ("LINEAR WATERWAY", None), ("FLOW DIRECTION", None), (None, None),
@@ -113,6 +113,7 @@ def card(row, level_text="", degree=("", "")):
     rl_ex, rl_pr = rail_levels(level_text)
     hfl = hfl_max(level_text)
     ch = chainage_m(row.get("chainage"))
+    ch_pr = chainage_m(row.get("_prop_chainage")) or ch          # a proposal printed with its own chainage
     bl = row.get("prop_bed_level") or ""
     br = re.sub(r"\s+", " ", row.get("br_no") or "")
     return {
@@ -121,9 +122,9 @@ def card(row, level_text="", degree=("", "")):
         "color": ("BLACK", "RED"), "br_no": (br, br), "rdso": (RDSO, RDSO),
         "type": (row.get("exg_structure") or "", row.get("prop_structure") or ""),
         "cells": (ex_c, pr_c), "span": (ex_s, pr_s), "height": (ex_h, pr_h),
-        "chainage": (ch, ch), "skew": ("0", "0"), "degree": tuple(degree), "bed_level": (bl, bl),
+        "chainage": (ch, ch_pr), "skew": ("0", "0"), "degree": tuple(degree), "bed_level": (bl, bl),
         "fl": (row.get("exs_fl") or "", row.get("prop_fl") or ""), "rl": (rl_ex or "", rl_pr or ""),
-        "hfl": (hfl, hfl), "end_dist": ("0", "0"),
+        "hfl": (hfl, hfl), "end_dist": ("0", "0"), "tc": ("", ""),
     }
 
 

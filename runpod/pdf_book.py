@@ -244,7 +244,40 @@ class Book:
         missing = F.not_found(nums, [w for _, _, w, _ in items])
         return text + (f"\nNot printed {self.where} (so not in the file; nothing is guessed): {', '.join(missing)}" if missing else "")
 
+    EXPORT_Q = re.compile(r"\b(gradients?|curves?|stations?)\b.*\b(lists?|csv|excel|xlsx|tables?|all)\b|\b(lists?|all)\b.*\b(gradients|curves|stations)\b|"
+                          r"\bbridge\s*list\b.*\b(template|format|excel|xlsx)\b|\ball\s+(?:the\s+)?lists\b", re.I)
+
+    def export_lists(self, q):
+        """'Gradient list in excel', 'all curves as csv', 'station list', 'all lists': the Sample templates' layouts
+        (lsec_exports.py) from every page; several lists asked -> one zip. Every value as the sheets print it."""
+        import sys
+        import zipfile
+        root = Path(__file__).resolve().parent.parent
+        sys.path[:0] = [str(root / "lsec_kit"), str(root / "scripts"), str(root / "gad_tools")]
+        import ask_lsec
+        import lsec_exports
+        anns = ask_lsec.read_pdf(self.path)
+        name = Path(getattr(self, "display_name", self.path.name)).stem
+        files, findings = lsec_exports.write_all(anns, self.out / "exports", name)
+        ql = q.lower()
+        want = [k for k, pat in (("Bridge_List", r"bridge"), ("Graidient_excel", r"gradient|grade"), ("Prop_Curve_List", r"curve"),
+                                 ("Station_Excel", r"station")) if re.search(pat, ql)] or list(files)
+        if len(want) == 1:
+            path = files[want[0]][0]
+        else:
+            path = self.out / "exports" / f"{name}_lists.zip"
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+                for k in want:
+                    z.write(files[k][0], files[k][0].name)
+        self.last_export = {"path": path, "csv": path, "rows": [None] * sum(files[k][1] for k in want), "issues": findings, "kind": "card",
+                            "preview": "\n".join(f"{files[k][0].name}: {files[k][1]} rows" for k in want)}
+        return (f"{', '.join(k.replace('_', ' ') for k in want)} for {len(anns)} sheet(s), in the Sample templates' columns, every value "
+                f"as the sheets print it · saved as {path}\n" + "\n".join(f"  {files[k][0].name}: {files[k][1]} rows" for k in want)
+                + ("\nCHECK · " + "\nCHECK · ".join(findings) if findings else ""))
+
     def answer(self, q):
+        if self.EXPORT_Q.search(q) and not F.bridge_nums(q):
+            return self.export_lists(q)
         if F.wants_card(q, F.bridge_nums(q)) and re.search(r"\bbr(?:idge)?s?\b|\bbr\.|\b\d{1,4}a?(?:up|dn)\b", q.lower()):
             return self.bridge_csv(q)
         if re.search(r"\bcurves?\b", q, re.I) and F.bridge_nums(q):

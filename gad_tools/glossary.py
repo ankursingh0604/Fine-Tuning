@@ -67,6 +67,47 @@ BUILT_IN = {
 }
 
 
+# Plan & L-section sheets use some of the same letters for other things (TTL, TRL, CCL in a curve's block): their
+# meanings there, used first when the context is an L-section
+LSEC = {
+    "ST": "straight to transition point: where the transition curve starts (the curve begins)",
+    "TS": "transition to straight point: where the transition curve ends (the curve is over)",
+    "TC": "transition to circular point: where the transition curve meets the circular curve",
+    "CT": "circular to transition point: where the circular curve meets the second transition curve",
+    "TP1": "tangent point 1: where the curve starts (the straight meets the curve)",
+    "TP2": "tangent point 2: where the curve ends (the curve meets the next straight)",
+    "J1": "junction point 1: where the transition curve meets the circular curve (start of the circular part)",
+    "J2": "junction point 2: where the circular curve meets the second transition curve (end of the circular part)",
+    "TTP1": "tangent to transition point 1 (start of the transition curve)", "TTP2": "transition to tangent point 2 (end of the curve)",
+    "CTP1": "circular to transition point", "TPTC": "tangent point / transition curve point", "TPCC": "tangent point of the circular curve",
+    "GP": "grade point: where the gradient of the formation changes", "VPI": "vertical point of intersection: where two gradients meet",
+    "PVI": "point of vertical intersection: where two gradients meet",
+    "FL": "formation level: the level of the top of the formation (embankment / cutting) the track sits on, in metres",
+    "RL": "rail level: the level of the top of the rail, in metres", "TRL": "transition length: the length of each transition curve, in metres",
+    "TTL": "total tangent length of the curve, in metres", "TL": "tangent length of the curve, in metres",
+    "CCL": "circular curve length: the length of the circular part of the curve, in metres",
+    "TCL": "total curve length, in metres", "CA": "cant (superelevation): how much the outer rail is raised on the curve, in mm",
+    "CD": "cant deficiency, in mm", "VMAX": "maximum permitted speed on the curve", "R": "radius of the curve, in metres",
+    "DELTA": "deflection angle of the curve", "DEGREE": "degree of curve (sharpness: the angle for a standard chord length)",
+    "SHIFT": "shift of the circular curve caused by the transition curves, in metres",
+    "MSL": "mean sea level (levels are heights above it)", "TBM": "temporary bench mark: a surveyed point of known level used as reference",
+    "BM": "bench mark: a surveyed point of known level", "LC": "level crossing (road crossing the track at rail level)",
+    "ROB": "road over bridge (a road bridge over the railway)", "RUB": "road under bridge (the railway on a bridge over a road)",
+    "FOB": "foot over bridge", "HC": "horizontal clearance, in metres", "VC": "vertical clearance, in metres",
+    "HFL": "high flood level, in metres", "OHFL": "observed high flood level, in metres", "CHFL": "calculated high flood level, in metres",
+    "BL": "bed level of the stream / drain under the bridge, in metres", "GL": "ground level, in metres", "OGL": "original ground level, in metres",
+    "NGL": "natural ground level, in metres", "MINFLREQ": "minimum formation level required at the bridge (for clearance / free board), in metres",
+    "EXG": "existing", "EX": "existing", "PROP": "proposed", "PRO": "proposed", "CH": "chainage: distance along the line, in metres (km+m)",
+    "KM": "kilometre (chainage in km)", "MGBG": "magnetic bearing of the straight", "ROW": "right of way: the land width taken for the railway",
+    "PSC": "prestressed concrete", "RCC": "reinforced cement concrete", "HP": "hume pipe (a round concrete pipe culvert)",
+    "FT": "flat top (a flat slab culvert)", "DATUM": "the reference level the L-section's levels are drawn from",
+    "VH": "vertical to horizontal scale ratio of the L-section (the vertical is exaggerated)",
+    "LHS": "left hand side", "RHS": "right hand side", "STN": "station", "DN": "down line", "UP": "up line",
+    "FB": "free board: height of the formation / soffit above the flood level, in metres",
+    "EARTHCUSHION": "earth cushion: depth of fill over the top of a box / pipe, in metres",
+}
+
+
 def key(label):
     return re.sub(r"[^A-Z0-9]", "", (label or "").upper())
 
@@ -120,6 +161,8 @@ def meaning(label, web=False, context="railway bridge drawing"):
     e = g.get(k)
     if e and e.get("approved") and e.get("meaning"):
         return e["meaning"], "glossary"
+    if re.search(r"l-?section|plan\s*&?\s*profile|alignment", context or "", re.I) and k in LSEC:
+        return LSEC[k], "built-in"
     if k in BUILT_IN:
         return BUILT_IN[k], "built-in"
     if e and e.get("meaning"):

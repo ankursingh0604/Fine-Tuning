@@ -35,7 +35,8 @@ ITEM_ID = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?
                      r"(?P<id>(?:LC|ROB|RUB|FOB)\b\s*[-.]?\s*(?:\d+[A-Z]*)?(?:\s*\([^)]*\))?"
                      r"|\d+[A-Z]*(?:\s*\([^)]*\))?(?:\s+(?:UP|DN)\b)?)", re.I)
 XING = re.compile(r"L-?XING\s*NO\.?\s*\d+[A-Z]*", re.I)
-PROP_AS = re.compile(r"PRO\w*\.?\s*TO\s*BE\s*(?:EXTENDED|CONSTRUCTED|PROVIDED|REPLACED|REBUILT)?\s*(?:AS|BY|WITH)?\s*(?P<p>.*)$", re.I)
+# "PRO TO BE EXTENDED AS 1 X 4X4 - RCC BOX (MINOR)", and the short form "PROP AS 1 X 4 X 2 - RCC BOX (MINOR)"
+PROP_AS = re.compile(r"PRO\w*\.?\s*(?:TO\s*BE\s*(?:EXTENDED|CONSTRUCTED|PROVIDED|REPLACED|REBUILT)?\s*(?:AS|BY|WITH)?|AS(?=\s*\d))\s*(?P<p>.*)$", re.I)
 PROP_NOTE = re.compile(r"(?P<p>(?:ROB|RUB|FOB)\s*PROPOSED.*)$", re.I)
 PREFIX = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.?)?\s*(?:BR(?:IDGE)?\.?\s*NO\.?\s*[:.\-]?\s*)?$", re.I)
 LEVEL_KV = re.compile(r"((?:EX(?:G|IST\w*)?|PROP\w*|MIN)?\.?\s*F\.?\s*L\.?(?:\s*REQ\.?)?|H\.?\s*F\.?\s*L|B\.?\s*L)\s*[:=\-]\s*(-?\d+(?:\.\d+)?)",
@@ -114,10 +115,18 @@ def parse_callout(text, hint=None):
     reading that does not contain it falls back to the usual parse (and so shows up as a difference)."""
     t = re.sub(r"\s+", " ", text or "").strip()
     row = dict.fromkeys(FIELDS)
-    ch = AT_CH.search(t)
-    if ch:
+    chs = list(AT_CH.finditer(t))
+    if chs:
+        ch = chs[0]
         row["chainage"] = chainage_str(ch.group(1))
-        t = t[:ch.start()]
+        prop_after = len(chs) > 1 and PROP_AS.search(t[ch.end():chs[-1].start()])
+        if prop_after:
+            # the proposal after the existing bridge's chainage, with its own ("... AT CH: 987+501.000 PRO TO BE
+            # EXTENDED AS 1 X 3.66 X - PSC SLAB (MINOR) AT CH: 987+471.802"): its chainage is the proposed bridge's
+            row["_prop_chainage"] = chainage_str(chs[-1].group(1))
+            t = t[:ch.start()] + " " + t[ch.end():chs[-1].start()]
+        else:
+            t = t[:ch.start()]
     if hint:
         h = re.search(r"\s*".join(map(re.escape, re.sub(r"\s", "", hint))), t, re.I)
         if h and len(t[:h.start()]) < 60:

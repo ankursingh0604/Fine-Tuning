@@ -29,13 +29,14 @@ AT_CH = re.compile(r"(?:\bAT\s*CH\.?\s*[:.]?|\bCH\s*:)\s*(\d[\d\s+.,]*)", re.I)
 ONE_SPAN = r"\d+\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*M?"
 SPAN = re.compile(rf"\bSPAN\s*[:.]?\s*({ONE_SPAN}(?:\s*\+\s*{ONE_SPAN})*)", re.I)
 BARE_SPAN = re.compile(rf"({ONE_SPAN}(?:\s*\+\s*{ONE_SPAN})*)", re.I)      # "RCC SLAB - 1 X 1.83 + 1 X 3.66 + 1 X 1.83"
-PROPOSAL = re.compile(r"PRO\w*\.?\s*TO\s*BE\s*(\w[^()]*?)\s*(?:\(|AT\s*CH|$)", re.I)     # "PRO TO BE EXTENDED AS ..."
+PROPOSAL = re.compile(r"PRO\w*\.?\s*(?:TO\s*BE\s*|(?=AS\s*\d))(\w[^()]*?)\s*(?:\(|AT\s*CH|$)", re.I)   # "PRO TO BE EXTENDED AS ...", "PROP AS 1 X ..."
 LEVEL_KV = re.compile(r"((?:EX(?:G|IST\w*)?|PROP\w*|MIN)?\.?\s*F\.?\s*L\.?(?:\s*REQ\.?)?|H\.?\s*F\.?\s*L|B\.?\s*L|SFL|RL)\s*[:=\-]\s*(-?\d+(?:\.\d+)?)",
                       re.I)
 CURVE_PT = re.compile(r"^\W*(?P<ex>EX(?:G|IST(?:ING)?)?\.?\s*)?C\.?\s*(?:NO\.?)?\s*[-.]?\s*(?P<id>\d+[A-Z]*)\s*[.,]?\s*(?:\([LR]\w*\)\s*)?"
                       r"(?P<pt>TPTC|TPCC|TC|CT|CC|TS|SC|CS|ST)\s*-?\s*(?P<n>\d)?\b.*?\bCH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
 CURVE_HEAD = re.compile(r"^\W*(?P<ex>EX(?:G)?\.?\s*)?C\.?\s*NO\.?\s*[-.]?\s*(?P<id>\d+[A-Z]*)\s*\((?P<hand>[LR])\w*\)\s*(?:\((?P<line>UP|DN)\))?"
                         r"\s*(?P<line2>UP|DN)?\W*$", re.I)
+PROP_START = re.compile(r"^\W*PRO\w*\.?\s*(?:TO\s*BE|BY|AS)\b", re.I)      # a callout's proposal line: "PRO TO BE EXTENDED AS ..."
 CURVE_LINE = re.compile(r"^\W*(?:Δ|∆|DELTA|R|TL|CL|TRL|TTL|CCL|SHIFT|CA|CD|MSP|V\s*MAX|VMAX|V|LS|L|DEG(?:REE)?\.?(?:\s*OF\s*CURVE)?)\s*[:=]",
                         re.I)
 # a curve's detail block headed by its number in words: "CURVE No. 248" / Degree / Δ / R / TTL / CCL / (RH)
@@ -55,7 +56,9 @@ CROSS_HEAD = re.compile(r"^\W*(?:C/L\s*OF\s*)?(?:EXG?\.?|EX\.|EXISTING|PROP\w*\.
 BLOCK_KV = re.compile(r"(?<![A-Z0-9.])((?:[A-Z][A-Z.]*|[1-9](?:ST|ND|RD|TH))(?:[ \t]*(?:[A-Z][A-Z./]*|[1-9](?:ST|ND|RD|TH)))*)\s*[:=]\s*(-?\d+(?:\.\d+)?)",
                       re.I)
 XING_RE = re.compile(r"L-?XING\s*NO\.?\s*(?P<num>\d+[A-Z]*)", re.I)
-LONE_PT = re.compile(r"^\W*(?P<pt>ST|TS|TC|CT|SC|CS)\s*(?:AT\s*)?CH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
+# a curve point printed on its own: ST / TC / CT / TS (or SC / CS), or TP1 / J1 / J2 / TP2 (read as ST / TC / CT / TS)
+LONE_PT = re.compile(r"^\W*(?P<pt>ST|TS|TC|CT|SC|CS|TP\s*[12]|J\s*[12])\s*(?:AT\s*)?CH\.?\s*[:.]?\s*(?P<ch>\d[\d+.]*)", re.I)
+LONE_AS = {"TP1": "ST", "J1": "TC", "J2": "CT", "TP2": "TS"}
 
 
 def fmt_ch(v):
@@ -206,6 +209,13 @@ class SheetObjects:
             if id(w) in used:
                 continue
             parts = self.lines_from(w, lambda t: not BR_RE.search(t) and not LEVEL_LINE.match(t), lambda t: bool(AT_CH.search(t)), 5)
+            # the proposal printed after the existing bridge's chainage, with its own: "... 3.66-STREAM AT CH: 987+501.000"
+            # / "PRO TO BE EXTENDED AS 1 X 3.66 X - PSC" / "SLAB (MINOR) AT CH: 987+471.802" - one callout
+            if AT_CH.search(joined(parts).text):
+                nxt = self.next_line(parts[-1], lambda t: bool(PROP_START.match(t)))
+                if nxt is not None and nxt not in parts and id(nxt) not in used:
+                    parts += self.lines_from(nxt, lambda t: not BR_RE.search(t) and not LEVEL_LINE.match(t),
+                                             lambda t: bool(AT_CH.search(t)), 4)
             used.update(id(p) for p in parts)
             st = status_of(w.text)
             by.setdefault((num, st), Bridge(num, st)).labels.append(parts)
@@ -351,10 +361,23 @@ class SheetObjects:
             key = ("@blk" + num, "proposed", track)
             if key in by:
                 continue
+            # the same curve already made from its points printed one by one: give it this block's number, track, details
+            same = next((c for c in by.values() if c.points and abs(c.span[0] - pts["ST1"][0]) < 0.01 and abs(c.span[1] - pts["TS2"][0]) < 0.01), None)
+            if same is not None:
+                same.block_num, same.track = same.block_num or num, same.track or track
+                same.details.append(parts)
+                continue
             c = Curve(num, "proposed", None)
             c.points, c.track = pts, track
             c.details.append(parts)
             by[key] = c
+        # the same points printed one by one along the profile, for two lines at once ("4TH LINE" and "3RD LINE" curves
+        # overlapping): grouped by chainage they mix the lines up - the blocks already give those curves, whole
+        on_blocks = {round(ch, 2) for k, c in by.items() if k[0].startswith("@blk") for ch, _ in c.points.values()}
+        for k, c in list(by.items()):
+            if k[0].startswith("@") and not k[0].startswith("@blk") and not c.block_num and c.points \
+                    and all(round(ch, 2) in on_blocks for ch, _ in c.points.values()):
+                del by[k]
 
     @property
     def main_track(self):
@@ -390,12 +413,15 @@ class SheetObjects:
                 b = next((c.points[p][0] for p in ("CT", "CS", "TPCC2") if p in c.points), None)
                 return None if a is None or b is None else b - a
             fit = [c for c in by.values() if circ(c) is not None and abs(circ(c) - float(ccl.group(1))) < 0.02]
-            if len(fit) > 1:                          # the same length twice: the one nearest the block along the sheet
+            if any(c.block_num == num for c in fit):  # (its block printed again elsewhere on the sheet)
+                fit = [c for c in fit if c.block_num == num]
+            elif len(fit) > 1:                        # the same length twice: a curve without its block yet, nearest the block
+                free = [c for c in fit if not c.block_num] or fit
                 along = lambda c: min(abs(pw.c[0] - w.c[0]) for _, pw in c.points.values())
-                fit = [min(fit, key=along)]
+                fit = [min(free, key=along)]
             for c in fit:
                 c.details.append(parts)
-                c.block_num = num
+                c.block_num = c.block_num or num
 
     def find_curves(self, num):
         """The curves numbered num: by their points' number, or by the "CURVE No." block found for them."""
@@ -429,9 +455,11 @@ class SheetObjects:
         for w in self.words:
             m = LONE_PT.match(w.text)
             if m:
-                n = numbers(m.group("ch"))
+                ch = m.group("ch").replace(" ", "")
+                n = [int(ch.split("+")[0]) * 1000 + float(ch.split("+")[1] or 0)] if re.fullmatch(r"\d+\+[\d.]+", ch) else numbers(ch)
                 if n:
-                    pts.setdefault((m.group("pt").upper(), round(n[0], 3)), w)
+                    pt = re.sub(r"\s", "", m.group("pt")).upper()
+                    pts.setdefault((LONE_AS.get(pt, pt), round(n[0], 3)), w)
         seq = sorted(((ch, pt, w) for (pt, ch), w in pts.items()), key=lambda t: t[0])
         cur = None
         for ch, pt, w in seq:

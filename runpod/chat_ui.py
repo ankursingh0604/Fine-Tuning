@@ -260,14 +260,20 @@ def main():
     ap.add_argument("--4bit", dest="four_bit", action="store_true", help="load the base model in 4-bit (small GPUs)")
     ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from other machines on the network")
     ap.add_argument("--port", type=int, default=7860)
+    ap.add_argument("--v5", action="store_true", help="the adapter is the L-section v5 one (Qwen3.5-4B, lsec_kit)")
     args = ap.parse_args()
     import uvicorn
     from transformers.utils import logging as hf_logging
-    from app import Model, model_ask
     hf_logging.set_verbosity_error()             # not one "max_new_tokens ... max_length" warning per crop read
     import warnings
     warnings.filterwarnings("ignore", message=r".*max_new_tokens.*max_length.*")
-    docs = Docs(model_ask(Model(args.adapter, args.four_bit)))
+    if args.v5:
+        from model_v5 import Model as V5
+        m = V5(args.adapter, args.four_bit)
+        docs = Docs(lambda imgs, q: m.ask(imgs, q))
+    else:
+        from app import Model, model_ask
+        docs = Docs(model_ask(Model(args.adapter, args.four_bit)))
     print(f"open http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}")
     uvicorn.run(create_app(docs), host=args.host, port=args.port, log_level="warning")
 

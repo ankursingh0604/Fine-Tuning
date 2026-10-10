@@ -37,3 +37,9 @@ gad_kit/rendered_samples.txt
 
 # GAD model results (trained weights and predictions that quote the drawings): kept in-house
 results/gad/
+
+# L-section v5: everything read from the drawings stays in-house
+data/v5/
+lsec_kit/lsec_bundle.zip
+lsec_kit/lsec_run/
+lsec_kit/rendered_samples.txt

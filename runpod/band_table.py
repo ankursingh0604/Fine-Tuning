@@ -147,8 +147,10 @@ def _headings(words, bands):
         span = (min(ys) - 200 * b.chain.h, max(ys) + 200 * b.chain.h)
         heads = [w for w in words if w.box[2] < x0 - 0.5 * w.h and x0 - w.c[0] < 120 * w.h and span[0] < w.c[1] < span[1]
                  and not NUM.match(w.text.strip())]
-        gaps = [b2 - a for a, b2 in zip(ys, ys[1:])]
-        half = min(gaps) / 2 if gaps else 3 * b.chain.h
+        gaps = sorted(b2 - a for a, b2 in zip(ys, ys[1:]))
+        # (the band's usual row spacing: a few short stray rows - station marks above the band - must not make it
+        # tiny, or a heading over four lines keeps only its middle two)
+        half = gaps[len(gaps) // 2] / 2 if gaps else 3 * b.chain.h
         for r in b.rows:
             r.lines = sorted((w for w in heads if abs(w.c[1] - r.y) < half), key=lambda w: (w.c[1], w.c[0]))
             r.heading = " ".join(w.text for w in r.lines).strip()
